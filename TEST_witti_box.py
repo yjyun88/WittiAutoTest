@@ -3,7 +3,7 @@ import time
 from box_aram import touch_aramlist_images
 from box_book import touch_booklist_images
 from download_thumbnails import *
-from reques_API import *
+from request_API import *
 from box_ACT import class_select
 from box_mew import touch_mewlist_images
 from box_tv import touch_tvlist_images

@@ -4,7 +4,7 @@ from airtest.core.api import device, time, connect_device
 
 from TEST_witti_box import check_wittibox
 from TEST_witti_world import check_wittiaram, check_wittimew
-from reques_API import login_step1, login_step2
+from request_API import login_step1, login_step2
 from download_thumbnails import cleanup_thumbnails
 
 

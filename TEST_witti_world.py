@@ -1,5 +1,5 @@
 from utils import Template
-from reques_API import *
+from request_API import *
 from world_ACT import *
 
 from download_thumbnails import download_thumbnails
