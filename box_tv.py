@@ -48,22 +48,18 @@ def touch_tvlist_images(
                 touch_template(before_template)
                 time.sleep(1)
 
-            max_swipe_attempts = 5 # 최대 스와이프 재시도 횟수
             attempts = 0
             touched = False
 
-            while not touched and attempts < max_swipe_attempts:
-                try:
-                    touch_template(Template(img_path))
+            while not touched: # max_swipe_attempts 제거
+                if touch_template(Template(img_path)):
                     touched = True # 이미지를 찾아서 터치 성공
-                except Exception as e:
-                    print(f"'{img_file}' 이미지 터치 실패: {e}. 리스트를 스와이프하고 재시도합니다. (시도 {attempts + 1}/{max_swipe_attempts}회)")
+                else:
+                    # touch_template 함수가 False를 반환했으므로 터치 실패
+                    print(f"'{img_file}' 이미지 터치 실패. 리스트를 스와이프하고 재시도합니다. (시도 {attempts + 1}회)") # 최대 시도 횟수 메시지 제거
                     swipe((0.5, 0.6), vector=[-0.5, 0]) # 왼쪽으로 스와이프
                     time.sleep(1) # 스와이프 후 잠시 대기
                     attempts += 1
-            # 최대 시도 횟수 후에도 이미지를 찾지 못한 경우
-            if not touched:
-                print(f"경고: 최대 스와이프 시도({max_swipe_attempts}회) 후에도 '{img_file}' 이미지를 찾지 못했습니다.")
 
             print("======================================== 컨텐츠 실행 대기 ========================================")
             time.sleep(10)
