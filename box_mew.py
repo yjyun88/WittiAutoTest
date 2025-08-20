@@ -10,7 +10,7 @@ from check_video import is_video_playing
 
 before_tpl = Template(r"button_images\mew_cate.png")
 after_tpl = [
-    Template(r"button_images\mew_down.png", threshold=0.85),
+    Template(r"button_images\mew_down_9.png", threshold=0.85),
     Template(r"button_images\mew_home.png", threshold=0.85)
 ]
 play_tpl = Template(r"button_images\play.png")
@@ -100,7 +100,7 @@ def touch_mewlist_images(
                     except Exception:
                         ok = False
                     if not ok:
-                        touch_template(Template(r"button_images\mew_down_9.png"))
+                        touch_template(Template(r"button_images\mew_down.png"))
                     time.sleep(3)
         except Exception as e:
             print(f"{img_file} 이미지를 못 찾았거나 터치 실패: {e}")
