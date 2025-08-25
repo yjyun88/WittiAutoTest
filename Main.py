@@ -213,6 +213,13 @@ class MainApp(QtWidgets.QMainWindow):
         edit.verticalScrollBar().setValue(edit.verticalScrollBar().maximum())
 
     def load_devices(self):
+
+        DEVICE_ALIASES = {
+            "R9TX202G5NK": "Galaxy Tab A9+ / AOS 15",
+            "R54Y600EM7T": "Galaxy Tab S10 FE / AOS 15",
+            "R9TX20A57VM": "Galaxy Tab A9+ / AOS 13"
+        }
+
         try:
             # ▶ 번들 ADB 사용
             out = run_adb(["devices", "-l"], text=True, encoding="utf-8", errors="ignore", timeout=20)
@@ -266,14 +273,17 @@ class MainApp(QtWidgets.QMainWindow):
             # 라벨/데이터 구성: USB 먼저, 그 다음 Wi-Fi
             items = []
             for k, d in by_serial.items():
+
+                display_name = DEVICE_ALIASES.get(k, k)
+
                 if 'usb' in d:
                     e = d['usb']
-                    label = f"{k} [USB]"
+                    label = f"{display_name} [USB]"
                     effective_id = e['canon']     # USB는 시리얼을 -s에 사용
                     items.append((label, effective_id))
                 if 'wifi' in d:
                     e = d['wifi']
-                    label = f"{k} [Wi-Fi]"
+                    label = f"{display_name} [Wi-Fi]"
                     effective_id = e['dev_id']    # Wi-Fi는 mDNS/IP:port를 -s에 사용
                     items.append((label, effective_id))
 
