@@ -65,7 +65,7 @@ exe = EXE(
     a.binaries,
     a.zipfiles,
     a.datas,
-    name='Main',
+    name='Witti_AutoTest',
     debug=False,
     strip=False,
     upx=True,
