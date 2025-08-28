@@ -2,7 +2,7 @@ import sys, time, os
 
 from Touch_template import touch_template
 from utils import Template, output_path
-from airtest.core.api import exists
+from airtest.core.api import exists, swipe
 from box_ACT import capture_screen
 from create_report import create_report, input_excel
 from check_video import is_video_playing
@@ -54,7 +54,7 @@ def touch_aramlist_images(
             touched = False
 
             while not touched: # max_swipe_attempts 제거
-                if touch_template(Template(img_path)):
+                if touch_template(Template(img_path), threshold=0.95):
                     touched = True # 이미지를 찾아서 터치 성공
                 else:
                     # touch_template 함수가 False를 반환했으므로 터치 실패
