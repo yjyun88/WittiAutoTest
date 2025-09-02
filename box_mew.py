@@ -69,6 +69,7 @@ def touch_mewlist_images(
             # 2) 컨텐츠 화면에 play 버튼 있으면 버튼 누르기
             if exists(play_tpl):
                touch_template(play_tpl)
+               time.sleep(5)
 
             # 2-1) 컨텐츠 실행 확인
             video_playing = is_video_playing(timeout=30, interval=0.1, diff_threshold=0.2)
