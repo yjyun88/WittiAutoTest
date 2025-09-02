@@ -45,7 +45,7 @@ def touch_tvlist_images(
         try:
             # 1) 카테고리 리스트 터치
             if before_template:
-                touch_template(before_template)
+                touch_template(before_template, region_code=7)
                 time.sleep(1)
 
             attempts = 0

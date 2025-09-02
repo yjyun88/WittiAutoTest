@@ -46,15 +46,15 @@ def touch_mewlist_images(
         try:
             # 1) 카테고리 리스트 터치
             if before_template:
-                touch_template(before_template)
+                touch_template(before_template, region_code=7)
                 time.sleep(1)
             print(f"화면에서 {img_file} 이미지를 찾아 터치 시도")
 
             attempts = 0
             touched = False
 
-            while not touched: # max_swipe_attempts 제거
-                if touch_template(Template(img_path), threshold=0.95):
+            while not touched:
+                if touch_template(Template(img_path), threshold=0.9):
                     touched = True # 이미지를 찾아서 터치 성공
                 else:
                     # touch_template 함수가 False를 반환했으므로 터치 실패
