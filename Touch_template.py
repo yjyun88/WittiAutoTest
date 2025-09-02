@@ -25,6 +25,7 @@ def touch_template(template,
         1 = 좌상, 2 = 우상, 3 = 좌하, 4 = 우하
         5 = 전체 화면(ROI=풀스크린으로 제한)
         6 = 우상 사분면 내부의 우상 서브 ROI (quad_sub_ratio)
+        7 = 중앙 수직 60% 영역 (좌우는 전체)
     """
 
     # --- Template 인자 정규화 ---
@@ -54,7 +55,7 @@ def touch_template(template,
         ST.CVSTRATEGY = ["mstpl"] + [s for s in old_strategy if s != "mstpl"]
 
     # --- ROI 계산 (필요할 때만) ---
-    allowed_codes = {0, 1, 2, 3, 4, 5, 6}
+    allowed_codes = {0, 1, 2, 3, 4, 5, 6, 7}
     use_roi = region_code in allowed_codes
 
     if use_roi:
@@ -91,6 +92,11 @@ def touch_template(template,
             x2 = qx2
             y2 = qy1 + sub_h - 1
             roi = (x1, y1, x2, y2)
+        elif region_code == 7:  # 중앙 수직 60% 영역
+            region_h = int(h * 0.6)
+            y1 = max(0, cy - region_h // 2)
+            y2 = min(h - 1, y1 + region_h - 1)
+            roi = (0, y1, w - 1, y2)
 
         x1, y1, x2, y2 = roi  # 좌표 언패킹
 
