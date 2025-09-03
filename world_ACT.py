@@ -150,10 +150,12 @@ def match_and_touch_roi(roi, top, subjCd, curtnSeq, act_items, saved_files):
         _, max_val, _, max_loc = cv2.minMaxLoc(res)    
 
         # 플레이 버튼 있으면 터치
-        touch_template(aram_play)
+        if exists(aram_play):
+            touch_template(aram_play)
 
         # 현재 화면 캡쳐, 컨텐츠 실행 확인
-        video_playing = is_video_playing(timeout=30, interval=0.1, diff_threshold=0.2)        
+        video_playing = is_video_playing(timeout=30, interval=0.1, diff_threshold=0.2)
+        time.sleep(5)
         capture_path, base = capture_screen(img_path="downloaded_images/school_aram", childNm=subjCd)
 
         # 엑셀 Report 생성, 데이터 삽입
@@ -175,7 +177,7 @@ def match_and_touch_roi(roi, top, subjCd, curtnSeq, act_items, saved_files):
         time.sleep(1)
 
         # 컨텐츠 종료
-        touch_template(Template(r"button_images\aram_exit.png"))
+        touch_template(Template(r"button_images\aram_exit.png"), region_code=1, threshold=0.3)
         time.sleep(5)
 
     # 어느 버튼도 못 찾았으면 False
