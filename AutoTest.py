@@ -41,6 +41,8 @@ def AutoTest_Start(
 
    # 2) 현재 연결된 디바이스 해상도 가져오기 (width, height)
     width, height = device().get_current_resolution()
+    if height > width:
+        width, height = height, width
     print(f"현재 디바이스 해상도 : {width} * {height}")
 
     print("현재 서버 선택 상태 : ", server)
