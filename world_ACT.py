@@ -1,4 +1,6 @@
 from airtest.core.api import exists, swipe, touch, snapshot
+from airtest.core.error import TargetNotFoundError
+
 from Touch_template import touch_template
 from utils import Template
 from PIL import Image
@@ -21,6 +23,7 @@ book_templates = {
     for i in range(1, 14)
 }
 aram_play = Template(r"button_images\aram_play.png", threshold=0.9)
+play_tpl_2 = Template(r"button_images\play.png")
 recorded_res = (1440, 2304)
 action_templates = {
     action: Template(
@@ -151,7 +154,12 @@ def match_and_touch_roi(roi, top, subjCd, curtnSeq, act_items, saved_files):
 
         # 플레이 버튼 있으면 터치
         if exists(aram_play):
-            touch_template(aram_play)
+            try:
+                touch_template(aram_play, threshold=0.9)
+            except TargetNotFoundError:
+                pos = exists(play_tpl_2)
+                if pos:
+                    touch(pos)
 
         # 현재 화면 캡쳐, 컨텐츠 실행 확인
         video_playing = is_video_playing(timeout=30, interval=0.1, diff_threshold=0.2)
