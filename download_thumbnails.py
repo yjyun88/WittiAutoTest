@@ -64,7 +64,7 @@ def download_all_thumbnails(childNm, curriculum_data, server):
     os.makedirs(folder_abs, exist_ok=True)
     print(f"이미지는 여기 저장됨: {folder_abs}")
 
-    SERVERS_WITH_MISSION_LIST = ["dev-api", "qa-api"]
+    SERVERS_WITH_MISSION_LIST = ["dev-api", "qa-api", "api"]
 
     # 서버에 따라 missionList 포함 여부
     raw_lists = (["missionList"] if server in SERVERS_WITH_MISSION_LIST else []) + BASE_LISTS
