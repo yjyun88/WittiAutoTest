@@ -14,8 +14,9 @@ aram_tpl = Template(r"button_images\witti_world\school_aram.png")
 aram_korean_tpl = Template(r"button_images\witti_world\school_aram_kor.png")
 aram_math_tpl = Template(r"button_images\witti_world\school_aram_mth.png")
 aram_science_tpl = Template(r"button_images\witti_world\school_aram_sci.png")
-play_tpl = Template(r"button_images\witti_world\aram_play.png")
+play_tpl = Template(r"button_images\witti_world\school_play.png")
 play_tpl_2 = Template(r"button_images\play.png")
+play_tpl_3 = Template(r"button_images\aram_play.png")
 mew_tpl = Template(r"button_images\witti_world\mew_button.png")
 mew_next = Template(r"button_images\witti_world\mew_next.png")
 mew_exit = Template(r"button_images\witti_world\mew_exit.png")
@@ -127,7 +128,7 @@ def check_wittimew(width, height, title_name):
         if i in (0, 6):
             ok = touch_template(play_tpl_2)
             if not ok:
-                touch_template(play_tpl)
+                touch_template(play_tpl_3)
 
         # 현재 화면 캡쳐, 컨텐츠 실행 확인
         if i in (1, 2, 5, 9, 11):
