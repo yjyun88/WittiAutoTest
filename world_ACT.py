@@ -160,6 +160,8 @@ def match_and_touch_roi(roi, top, subjCd, curtnSeq, act_items, saved_files):
                 pos = exists(play_tpl_2)
                 if pos:
                     touch(pos)
+        print("======================================== 컨텐츠 실행 대기 ========================================")
+        time.sleep(10)
 
         # 현재 화면 캡쳐, 컨텐츠 실행 확인
         video_playing = is_video_playing(timeout=30, interval=0.1, diff_threshold=0.2)

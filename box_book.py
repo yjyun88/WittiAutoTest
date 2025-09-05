@@ -9,7 +9,7 @@ from check_video import is_video_playing
 
 
 before_tpl = Template(r"button_images\book_cate.png")
-after_tpl_1 = Template(r"button_images\book_exit.png", threshold=0.85)
+after_tpl_1 = Template(r"button_images\book_exit.png")
 after_tpl_2 = Template(r"button_images\exit_y.png", threshold=0.85)
 
 #도서관 커리큘럼 선택
