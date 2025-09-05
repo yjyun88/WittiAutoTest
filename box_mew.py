@@ -53,15 +53,19 @@ def touch_mewlist_images(
             attempts = 0
             touched = False
 
-            while not touched:
+            while not touched and attempts < 5:
                 if touch_template(Template(img_path), threshold=0.9):
-                    touched = True # 이미지를 찾아서 터치 성공
+                    touched = True  # 이미지를 찾아서 터치 성공
                 else:
                     # touch_template 함수가 False를 반환했으므로 터치 실패
-                    print(f"'{img_file}' 이미지 터치 실패. 리스트를 스와이프하고 재시도합니다. (시도 {attempts + 1}회)") # 최대 시도 횟수 메시지 제거
-                    swipe((0.5, 0.6), vector=[-0.5, 0]) # 왼쪽으로 스와이프
-                    time.sleep(1) # 스와이프 후 잠시 대기
-                    attempts += 1
+                    attempts += 1 # 시도 횟수 증가
+                    print(f"'{img_file}' 이미지 터치 실패. 리스트를 스와이프하고 재시도합니다. (시도 {attempts}회 / 5회)")
+                    swipe((0.5, 0.6), vector=[-0.5, 0])  # 왼쪽으로 스와이프
+                    time.sleep(1)  # 스와이프 후 잠시 대기
+            
+            if not touched:
+                print(f"'{img_file}' 이미지를 5회 시도했으나 최종적으로 찾지 못했습니다.")
+                continue
 
             print("======================================== 컨텐츠 실행 대기 ========================================")
             time.sleep(40)
@@ -97,12 +101,12 @@ def touch_mewlist_images(
             if after_templates:
                 for tpl in (after_templates or ()):
                     try:
-                        ok = touch_template(tpl, region_code=6)
+                        ok = touch_template(tpl, region_code=6, threshold=0.8)
                     except Exception:
                         ok = False
                     if not ok:
-                        touch_template(Template(r"button_images\mew_down.png"))
-                    time.sleep(3)
+                        touch_template(Template(r"button_images\mew_down.png"), region_code=6, threshold=0.8)
+                    time.sleep(1)
         except Exception as e:
             print(f"{img_file} 이미지를 못 찾았거나 터치 실패: {e}")
             sys.exit(1)

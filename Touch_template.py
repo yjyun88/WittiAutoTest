@@ -8,9 +8,9 @@ def touch_template(template,
                    max_retries: int = 5,
                    wait: float = 3.0,
                    # scale options
-                   scale_min: float = 0.5,
-                   scale_max: float = 1.5,
-                   scale_step: float = 0.001,
+                   scale_min: float = 0.7,
+                   scale_max: float = 1.3,
+                   scale_step: float = 0.01,
                    center_ratio: float = 0.5,
                    quad_sub_ratio: float = 0.5,
                    after_touch_sleep: float = 1.0,
@@ -93,7 +93,7 @@ def touch_template(template,
             y2 = qy1 + sub_h - 1
             roi = (x1, y1, x2, y2)
         elif region_code == 7:  # 중앙 수직 60% 영역
-            region_h = int(h * 0.6)
+            region_h = int(h * 0.5)
             y1 = max(0, cy - region_h // 2)
             y2 = min(h - 1, y1 + region_h - 1)
             roi = (0, y1, w - 1, y2)
