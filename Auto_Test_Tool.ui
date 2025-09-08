@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>852</width>
-    <height>919</height>
+    <height>879</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -18,9 +18,9 @@
     <property name="geometry">
      <rect>
       <x>30</x>
-      <y>100</y>
+      <y>90</y>
       <width>301</width>
-      <height>71</height>
+      <height>61</height>
      </rect>
     </property>
     <property name="title">
@@ -32,7 +32,7 @@
        <x>30</x>
        <y>20</y>
        <width>241</width>
-       <height>31</height>
+       <height>21</height>
       </rect>
      </property>
     </widget>
@@ -41,7 +41,7 @@
     <property name="geometry">
      <rect>
       <x>60</x>
-      <y>270</y>
+      <y>230</y>
       <width>111</width>
       <height>91</height>
      </rect>
@@ -54,9 +54,9 @@
     <property name="geometry">
      <rect>
       <x>30</x>
-      <y>180</y>
+      <y>160</y>
       <width>301</width>
-      <height>71</height>
+      <height>61</height>
      </rect>
     </property>
     <property name="title">
@@ -68,7 +68,7 @@
        <x>30</x>
        <y>20</y>
        <width>241</width>
-       <height>31</height>
+       <height>21</height>
       </rect>
      </property>
     </widget>
@@ -77,9 +77,9 @@
     <property name="geometry">
      <rect>
       <x>360</x>
-      <y>100</y>
+      <y>90</y>
       <width>221</width>
-      <height>151</height>
+      <height>131</height>
      </rect>
     </property>
     <property name="title">
@@ -104,7 +104,7 @@
     <property name="geometry">
      <rect>
       <x>360</x>
-      <y>270</y>
+      <y>230</y>
       <width>461</width>
       <height>91</height>
      </rect>
@@ -302,7 +302,7 @@
     <property name="geometry">
      <rect>
       <x>20</x>
-      <y>490</y>
+      <y>430</y>
       <width>801</width>
       <height>391</height>
      </rect>
@@ -325,7 +325,7 @@
     <property name="geometry">
      <rect>
       <x>200</x>
-      <y>270</y>
+      <y>230</y>
       <width>111</width>
       <height>91</height>
      </rect>
@@ -338,9 +338,9 @@
     <property name="geometry">
      <rect>
       <x>600</x>
-      <y>100</y>
+      <y>90</y>
       <width>221</width>
-      <height>151</height>
+      <height>131</height>
      </rect>
     </property>
     <property name="title">
@@ -364,9 +364,9 @@
     <property name="geometry">
      <rect>
       <x>360</x>
-      <y>380</y>
+      <y>330</y>
       <width>461</width>
-      <height>101</height>
+      <height>91</height>
      </rect>
     </property>
     <property name="title">
@@ -456,7 +456,7 @@
     <property name="geometry">
      <rect>
       <x>200</x>
-      <y>380</y>
+      <y>330</y>
       <width>111</width>
       <height>91</height>
      </rect>
@@ -508,6 +508,20 @@ Clear</string>
       </property>
      </item>
     </widget>
+   </widget>
+   <widget class="QPushButton" name="pushButton_9">
+    <property name="geometry">
+     <rect>
+      <x>60</x>
+      <y>330</y>
+      <width>111</width>
+      <height>91</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>오늘의 미션
+완료</string>
+    </property>
    </widget>
   </widget>
   <widget class="QMenuBar" name="menubar">
