@@ -1,6 +1,6 @@
-import sys, time, os
+import sys, os
 
-from airtest.core.api import swipe, touch
+from airtest.core.api import swipe, touch, wait
 from Touch_template import touch_template
 from utils import Template, output_path
 
@@ -8,11 +8,14 @@ from box_ACT import capture_screen
 from create_report import create_report, input_excel
 from check_video import is_video_playing
 
-before_tpl = Template(r"button_images\tv_cate.png")
+BASE_RESOLUTION = (1920, 1200)
+
+before_tpl = Template(r"button_images\tv_cate.png", resolution=BASE_RESOLUTION)
 after_tpl = [
-    Template(r"button_images\tv_exit.png"),
-    Template(r"button_images\exit_y.png")
+    Template(r"button_images\tv_exit.png", resolution=BASE_RESOLUTION),
+    Template(r"button_images\exit_y.png", resolution=BASE_RESOLUTION)
 ]
+
 
 def touch_tvlist_images(
     childNm,
@@ -46,7 +49,6 @@ def touch_tvlist_images(
             # 1) 카테고리 리스트 터치
             if before_template:
                 touch_template(before_template, region_code=7)
-                time.sleep(1)
 
             attempts = 0
             touched = False
@@ -58,11 +60,10 @@ def touch_tvlist_images(
                     # touch_template 함수가 False를 반환했으므로 터치 실패
                     print(f"'{img_file}' 이미지 터치 실패. 리스트를 스와이프하고 재시도합니다. (시도 {attempts + 1}회)") # 최대 시도 횟수 메시지 제거
                     swipe((0.5, 0.6), vector=[-0.5, 0]) # 왼쪽으로 스와이프
-                    time.sleep(1) # 스와이프 후 잠시 대기
                     attempts += 1
 
             print("======================================== 컨텐츠 실행 대기 ========================================")
-            time.sleep(10)
+            wait(Template(r"button_images\tv_exit.png"), timeout=60)
             
             # 2) 컨텐츠 실행 확인
             video_playing = is_video_playing(timeout=30, interval=0.1, diff_threshold=0.2)
@@ -70,7 +71,6 @@ def touch_tvlist_images(
             
             # 3) 엑셀 Report 생성, 데이터 삽입    
             file_path, wb, ws = create_report()
-            time.sleep(1)
             class_name = f"{childNm}"
             content_name = f"{base}"
             thumb_path = os.path.join(image_folder_abs, img_file)
@@ -84,18 +84,15 @@ def touch_tvlist_images(
                 capture_path,
                 thumb_path
                 )
-            time.sleep(1)            
 
             # 4) 컨텐츠 종료
             if after_templates:
                 #일시 정지를 위해 두번 터치
                 touch((0.5, 0.5))
-                time.sleep(1)
+                #time.sleep(1)
                 touch((0.5, 0.5))
-                time.sleep(1)
                 for tpl in after_templates:
                     touch_template(tpl)
-                    time.sleep(1)
         except Exception as e:
             print(f"{img_file} 이미지를 못 찾았거나 터치 실패: {e}")
             sys.exit(1)

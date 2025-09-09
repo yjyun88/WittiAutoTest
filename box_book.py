@@ -1,4 +1,6 @@
-import sys, time, os
+import sys, os
+
+from airtest.core.api import wait
 
 from Touch_template import touch_template
 from box_ACT import capture_screen
@@ -7,10 +9,13 @@ from utils import Template, output_path
 from create_report import create_report, input_excel
 from check_video import is_video_playing
 
+BASE_RESOLUTION = (1920, 1200)
 
-before_tpl = Template(r"button_images\book_cate.png")
-after_tpl_1 = Template(r"button_images\book_exit.png")
-after_tpl_2 = Template(r"button_images\exit_y.png", threshold=0.85)
+before_tpl = Template(r"button_images\book_cate.png", resolution=BASE_RESOLUTION)
+after_tpl_1 = Template(r"button_images\book_exit.png", resolution=BASE_RESOLUTION)
+after_tpl_2 = Template(r"button_images\exit_y.png", threshold=0.85, resolution=BASE_RESOLUTION)
+
+
 
 #도서관 커리큘럼 선택
 def touch_booklist_images(
@@ -46,11 +51,10 @@ def touch_booklist_images(
             # 1) 카테고리 리스트 터치
             if before_template:
                 touch_template(before_template, region_code=7)
-                time.sleep(1)
             print(f"화면에서 {img_file} 이미지를 찾아 터치 시도")            
             touch_template(Template(img_path))
             print("======================================== 컨텐츠 실행 대기 ========================================")
-            time.sleep(10)
+            wait(after_tpl_1, timeout=60)
             
             # 2) 컨텐츠 실행 확인
             video_playing = is_video_playing(timeout=30, interval=0.1, diff_threshold=0.2)  
@@ -58,7 +62,6 @@ def touch_booklist_images(
             
             # 3) 엑셀 Report 생성, 데이터 삽입    
             file_path, wb, ws = create_report()
-            time.sleep(1)
             class_name = f"{childNm}"
             content_name = f"{base}"
             thumb_path = os.path.join(image_folder_abs, img_file)
@@ -72,13 +75,11 @@ def touch_booklist_images(
                 capture_path,
                 thumb_path
                 )
-            time.sleep(1)
           
             # 5) 컨텐츠 종료
             touch_template(after_tpl_1, 6)
-            time.sleep(2)
+            wait(after_tpl_2)
             touch_template(after_tpl_2, 0)
-            time.sleep(2)
 
         except Exception as e:
             print(f"{img_file} 이미지를 못 찾았거나 터치 실패: {e}")

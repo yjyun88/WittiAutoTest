@@ -10,21 +10,22 @@ from datetime import datetime
 
 from OCR_select_class import select_class
 
+BASE_RESOLUTION = (1920, 1200)
 
 # 설정 > 클래스 선택
 def class_select(childNm):
-    w, h = device().get_current_resolution()
+    #w, h = device().get_current_resolution()
     setup_tpl = Template(
             "button_images/setup_menu.png",  # 이미지 파일 경로
-            resolution=(w, h)
+            resolution=BASE_RESOLUTION
         )
     back_tpl = Template(
             "button_images/setup_back.png",  # 이미지 파일 경로
-            resolution=(w, h)
+            resolution=BASE_RESOLUTION
         )
         
     # 설정 진입
-    touch_template(setup_tpl)
+    touch_template(setup_tpl, region_code=6)
     print("설정 버튼 선택")
     time.sleep(2)
     
