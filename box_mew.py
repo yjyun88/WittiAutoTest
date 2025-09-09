@@ -1,6 +1,6 @@
-import sys, time, os
+import sys, os
 
-from airtest.core.api import swipe, exists
+from airtest.core.api import swipe, exists, sleep
 from Touch_template import touch_template
 from utils import Template, output_path
 
@@ -8,12 +8,14 @@ from box_ACT import capture_screen
 from create_report import create_report, input_excel
 from check_video import is_video_playing
 
-before_tpl = Template(r"button_images\mew_cate.png")
+BASE_RESOLUTION = (1920, 1200)
+
+before_tpl = Template(r"button_images\mew_cate.png", resolution=BASE_RESOLUTION)
 after_tpl = [
-    Template(r"button_images\mew_down_9.png", threshold=0.85),
-    Template(r"button_images\mew_home.png", threshold=0.85)
+    Template(r"button_images\mew_down_9.png", threshold=0.85, resolution=BASE_RESOLUTION),
+    Template(r"button_images\mew_home.png", threshold=0.85, resolution=BASE_RESOLUTION)
 ]
-play_tpl = Template(r"button_images\play.png")
+play_tpl = Template(r"button_images\play.png", resolution=BASE_RESOLUTION)
 
 def touch_mewlist_images(
     childNm,
@@ -47,7 +49,6 @@ def touch_mewlist_images(
             # 1) 카테고리 리스트 터치
             if before_template:
                 touch_template(before_template, region_code=7)
-                time.sleep(1)
             print(f"화면에서 {img_file} 이미지를 찾아 터치 시도")
 
             attempts = 0
@@ -61,19 +62,19 @@ def touch_mewlist_images(
                     attempts += 1 # 시도 횟수 증가
                     print(f"'{img_file}' 이미지 터치 실패. 리스트를 스와이프하고 재시도합니다. (시도 {attempts}회 / 5회)")
                     swipe((0.5, 0.6), vector=[-0.5, 0])  # 왼쪽으로 스와이프
-                    time.sleep(1)  # 스와이프 후 잠시 대기
             
             if not touched:
                 print(f"'{img_file}' 이미지를 5회 시도했으나 최종적으로 찾지 못했습니다.")
                 continue
 
             print("======================================== 컨텐츠 실행 대기 ========================================")
-            time.sleep(40)
+            sleep(30)
             
             # 2) 컨텐츠 화면에 play 버튼 있으면 버튼 누르기
             if exists(play_tpl):
                touch_template(play_tpl)
-               time.sleep(5)
+               sleep(5)
+
 
             # 2-1) 컨텐츠 실행 확인
             video_playing = is_video_playing(timeout=30, interval=0.1, diff_threshold=0.2)
@@ -81,7 +82,6 @@ def touch_mewlist_images(
             
             # 3) 엑셀 Report 생성, 데이터 삽입    
             file_path, wb, ws = create_report()
-            time.sleep(1)
             class_name = f"{childNm}"
             content_name = f"{base}"
             thumb_path = os.path.join(image_folder_abs, img_file)
@@ -95,7 +95,6 @@ def touch_mewlist_images(
                 capture_path,
                 thumb_path
                 )
-            time.sleep(1)            
 
             # 4) 컨텐츠 종료
             if after_templates:
@@ -106,7 +105,6 @@ def touch_mewlist_images(
                         ok = False
                     if not ok:
                         touch_template(Template(r"button_images\mew_down.png"), region_code=6, threshold=0.8)
-                    time.sleep(1)
         except Exception as e:
             print(f"{img_file} 이미지를 못 찾았거나 터치 실패: {e}")
             sys.exit(1)
