@@ -12,18 +12,19 @@ from box_ACT import capture_screen
 from check_video import is_video_playing
 from create_report import create_report, input_excel
 
+BASE_RESOLUTION = (1920, 1200)
 
 # 템플릿 미리 로드
 step_templates = {
-    i: Template(os.path.join(r"button_images\witti_world", f"step{i}.png"), threshold=0.95)
+    i: Template(os.path.join(r"button_images\witti_world", f"step{i}.png"), threshold=0.95, resolution=BASE_RESOLUTION)
     for i in range(1, 3)
 }
 book_templates = {
-    i: Template(os.path.join(r"button_images\witti_world", f"{i}.png"), threshold=0.95)
+    i: Template(os.path.join(r"button_images\witti_world", f"{i}.png"), threshold=0.95, resolution=BASE_RESOLUTION)
     for i in range(1, 14)
 }
-aram_play = Template(r"button_images\aram_play.png", threshold=0.9)
-play_tpl_2 = Template(r"button_images\play.png")
+aram_play = Template(r"button_images\aram_play.png", threshold=0.9, resolution=BASE_RESOLUTION)
+play_tpl_2 = Template(r"button_images\play.png", resolution=BASE_RESOLUTION)
 recorded_res = (1440, 2304)
 action_templates = {
     action: Template(

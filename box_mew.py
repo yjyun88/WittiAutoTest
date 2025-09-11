@@ -12,8 +12,8 @@ BASE_RESOLUTION = (1920, 1200)
 
 before_tpl = Template(r"button_images\mew_cate.png", resolution=BASE_RESOLUTION)
 after_tpl = [
-    Template(r"button_images\mew_down_9.png", threshold=0.85, resolution=BASE_RESOLUTION),
-    Template(r"button_images\mew_home.png", threshold=0.85, resolution=BASE_RESOLUTION)
+    Template(r"button_images\mew_down_9.png", threshold=0.8, resolution=BASE_RESOLUTION),
+    Template(r"button_images\mew_home.png", threshold=0.8, resolution=BASE_RESOLUTION)
 ]
 play_tpl = Template(r"button_images\play.png", resolution=BASE_RESOLUTION)
 
@@ -55,7 +55,7 @@ def touch_mewlist_images(
             touched = False
 
             while not touched and attempts < 5:
-                if touch_template(Template(img_path), threshold=0.9):
+                if touch_template(Template(img_path), threshold=0.91):
                     touched = True  # 이미지를 찾아서 터치 성공
                 else:
                     # touch_template 함수가 False를 반환했으므로 터치 실패
@@ -95,7 +95,7 @@ def touch_mewlist_images(
                 capture_path,
                 thumb_path
                 )
-
+            sleep(5)
             # 4) 컨텐츠 종료
             if after_templates:
                 for tpl in (after_templates or ()):

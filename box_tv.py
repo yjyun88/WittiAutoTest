@@ -1,6 +1,6 @@
 import sys, os
 
-from airtest.core.api import swipe, touch, wait
+from airtest.core.api import swipe, touch, wait, sleep
 from Touch_template import touch_template
 from utils import Template, output_path
 
@@ -64,7 +64,8 @@ def touch_tvlist_images(
 
             print("======================================== 컨텐츠 실행 대기 ========================================")
             wait(Template(r"button_images\tv_exit.png"), timeout=60)
-            
+            sleep(3)
+
             # 2) 컨텐츠 실행 확인
             video_playing = is_video_playing(timeout=30, interval=0.1, diff_threshold=0.2)
             capture_path, base = capture_screen(img_path, childNm)  
@@ -89,7 +90,7 @@ def touch_tvlist_images(
             if after_templates:
                 #일시 정지를 위해 두번 터치
                 touch((0.5, 0.5))
-                #time.sleep(1)
+                sleep(1)
                 touch((0.5, 0.5))
                 for tpl in after_templates:
                     touch_template(tpl)

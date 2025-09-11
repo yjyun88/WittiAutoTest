@@ -6,30 +6,32 @@ from download_thumbnails import download_thumbnails
 
 import time
 
-menu_tpl = Template(r"button_images\witti_world\witti_menu.png")
-school_tpl = Template(r"button_images\witti_world\witti_school.png")
-tv_tpl = Template(r"button_images\witti_world\witti_tv.png")
-enter_tpl = Template(r"button_images\witti_world\witti_enter.png")
-aram_tpl = Template(r"button_images\witti_world\school_aram.png")
-aram_korean_tpl = Template(r"button_images\witti_world\school_aram_kor.png")
-aram_math_tpl = Template(r"button_images\witti_world\school_aram_mth.png")
-aram_science_tpl = Template(r"button_images\witti_world\school_aram_sci.png")
-play_tpl = Template(r"button_images\witti_world\school_play.png")
-play_tpl_2 = Template(r"button_images\play.png")
-play_tpl_3 = Template(r"button_images\aram_play.png")
-mew_tpl = Template(r"button_images\witti_world\mew_button.png")
-mew_next = Template(r"button_images\witti_world\mew_next.png")
-mew_exit = Template(r"button_images\witti_world\mew_exit.png")
-mew_exit_y = Template(r"button_images\witti_world\mew_exit_y.png")
-exit_tpl = Template(r"button_images\witti_world\school_exit.png")
-exit_y_tpl = Template(r"button_images\witti_world\school_exit_y.png")
+BASE_RESOLUTION = (1920, 1200)
+
+menu_tpl = Template(r"button_images\witti_world\witti_menu.png", resolution=BASE_RESOLUTION)
+school_tpl = Template(r"button_images\witti_world\witti_school.png", resolution=BASE_RESOLUTION)
+tv_tpl = Template(r"button_images\witti_world\witti_tv.png", resolution=BASE_RESOLUTION)
+enter_tpl = Template(r"button_images\witti_world\witti_enter.png", resolution=BASE_RESOLUTION)
+aram_tpl = Template(r"button_images\witti_world\school_aram.png", resolution=BASE_RESOLUTION)
+aram_korean_tpl = Template(r"button_images\witti_world\school_aram_kor.png", resolution=BASE_RESOLUTION)
+aram_math_tpl = Template(r"button_images\witti_world\school_aram_mth.png", resolution=BASE_RESOLUTION)
+aram_science_tpl = Template(r"button_images\witti_world\school_aram_sci.png", resolution=BASE_RESOLUTION)
+play_tpl = Template(r"button_images\witti_world\school_play.png", resolution=BASE_RESOLUTION)
+play_tpl_2 = Template(r"button_images\play.png", resolution=BASE_RESOLUTION)
+play_tpl_3 = Template(r"button_images\aram_play.png", resolution=BASE_RESOLUTION)
+mew_tpl = Template(r"button_images\witti_world\mew_button.png", resolution=BASE_RESOLUTION)
+mew_next = Template(r"button_images\witti_world\mew_next.png", resolution=BASE_RESOLUTION)
+mew_exit = Template(r"button_images\witti_world\mew_exit.png", resolution=BASE_RESOLUTION)
+mew_exit_y = Template(r"button_images\witti_world\mew_exit_y.png", resolution=BASE_RESOLUTION)
+exit_tpl = Template(r"button_images\witti_world\school_exit.png", resolution=BASE_RESOLUTION)
+exit_y_tpl = Template(r"button_images\witti_world\school_exit_y.png", resolution=BASE_RESOLUTION)
 mew_after_tpl = [
-    Template(r"button_images\mew_down.png"),
-    Template(r"button_images\mew_home.png", rgb=True)
+    Template(r"button_images\mew_down.png", resolution=BASE_RESOLUTION),
+    Template(r"button_images\mew_home.png", rgb=True, resolution=BASE_RESOLUTION)
 ]
 mew_after_tpl_2 = [
-    Template(r"button_images\mew_down_9.png"),
-    Template(r"button_images\mew_home.png", rgb=True)
+    Template(r"button_images\mew_down_9.png", resolution=BASE_RESOLUTION),
+    Template(r"button_images\mew_home.png", rgb=True, resolution=BASE_RESOLUTION)
 ]
 
 
@@ -126,9 +128,9 @@ def check_wittimew(width, height, title_name):
         
         # 재생 버튼이 있으면 터치
         if i in (0, 6):
-            ok = touch_template(play_tpl_2)
+            ok = touch_template(play_tpl_2, region_code=0)
             if not ok:
-                touch_template(play_tpl_3)
+                touch_template(play_tpl_3, region_code=0)
 
         # 현재 화면 캡쳐, 컨텐츠 실행 확인
         if i in (1, 2, 5, 9, 11):
