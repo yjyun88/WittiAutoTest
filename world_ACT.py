@@ -20,16 +20,16 @@ step_templates = {
     for i in range(1, 3)
 }
 book_templates = {
-    i: Template(os.path.join(r"button_images\witti_world", f"{i}.png"), threshold=0.95, resolution=BASE_RESOLUTION)
+    i: Template(os.path.join(r"button_images\witti_world", f"{i}.png"), threshold=0.93, resolution=BASE_RESOLUTION)
     for i in range(1, 14)
 }
 aram_play = Template(r"button_images\aram_play.png", threshold=0.9, resolution=BASE_RESOLUTION)
 play_tpl_2 = Template(r"button_images\play.png", resolution=BASE_RESOLUTION)
-recorded_res = (1440, 2304)
+#recorded_res = (1440, 2304)
 action_templates = {
     action: Template(
         os.path.join(r"button_images\witti_world", f"{action}.png"),
-        resolution=recorded_res,
+        resolution=BASE_RESOLUTION,
         scale_max=2.0,
         scale_step=0.005
         )
@@ -188,7 +188,7 @@ def match_and_touch_roi(roi, top, subjCd, curtnSeq, act_items, saved_files):
         time.sleep(1)
 
         # 컨텐츠 종료
-        touch_template(Template(r"button_images\aram_exit.png"), region_code=1, threshold=0.3)
+        touch_template(Template(r"button_images\aram_exit.png", resolution=BASE_RESOLUTION), region_code=1)
         time.sleep(5)
 
     # 어느 버튼도 못 찾았으면 False
