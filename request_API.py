@@ -98,11 +98,11 @@ def get_curriculum_response(authToken, childId, server):
             'Authorization': f'Bearer {authToken}'
         }
         
-        print(f"런처 커리큘럼 조회 (childId: {childId})")
+        #print(f"런처 커리큘럼 조회 (childId: {childId})")
         response = requests.get(url, headers=headers, timeout=20)
         response.raise_for_status()
         
-        print("런처 커리큘럼 조회 성공")
+        #print("런처 커리큘럼 조회 성공")
         return response
 
     except requests.exceptions.RequestException as e:
@@ -110,6 +110,242 @@ def get_curriculum_response(authToken, childId, server):
         return None
     except Exception as e:
         print(f"[ERROR] 런처 커리큘럼 조회 중 예기치 않은 오류 발생: {e}")
+        return None
+
+
+# 오늘의 미션 '로그 출력' 및 '학습 완료 처리'
+def complete_today_missions(auth_tokens_by_child, all_child_missions, server):
+    """
+    모든 자녀의 미션 목록을 먼저 로그로 출력한 뒤,
+    comTypeNm에 따라 각기 다른 완료 API를 호출하여 처리합니다.
+    """
+    # --- 1단계: 모든 미션 목록 로그 출력 ---
+    if not all_child_missions:
+        print("[INFO] 확인된 오늘의 미션이 없습니다.")
+        return
+
+    print(f"--- 모든 자녀의 미션 목록 (총 {len(all_child_missions)}개) ---")
+    
+    current_child_info = "" # childId 와 childNm 을 함께 관리하기 위함
+    for mission in all_child_missions:
+        child_id_from_mission = mission.get("childId", "알 수 없는 자녀 ID") # Main.py에서 추가한 childId
+        child_name_from_mission = mission.get("childNm", "알 수 없는 자녀명")
+
+        # 자녀 정보가 바뀔 때만 출력
+        if current_child_info != f"{child_id_from_mission} ({child_name_from_mission})":
+            current_child_info = f"{child_id_from_mission} ({child_name_from_mission})"
+            print(f"[ 자녀: {child_name_from_mission} (ID: {child_id_from_mission}) ]")
+        
+        mission_details = (
+            f"  - 이름: {mission.get('name', 'N/A')}"
+            f"    (타입: {mission.get('comTypeNm', 'N/A')}, "
+            f"ID: {mission.get('contentId', 'N/A')}, "
+            f"코드: {mission.get('comCd', 'N/A')})"
+        )
+        print(mission_details)
+    
+    print("------------------------------------------")
+
+    # --- 2단계: 미션 완료 처리 시작 ---
+    print(f"--- 오늘의 미션 완료 처리 시작 ---")
+    
+    success_count = 0
+    fail_count = 0
+    
+    for mission in all_child_missions:
+        comTypeNm = mission.get("comTypeNm")
+        mission_name = mission.get("name", "이름 없는 미션")
+        child_id = mission.get("childId") # 각 미션에 저장된 childId 사용
+        child_nm = mission.get("childNm", "이름 없는 자녀")
+
+        print(f"- '{mission_name}' ({comTypeNm}) / 자녀: {child_nm} (ID: {child_id}) 처리 중...")
+
+        if not child_id:
+            print(f"  [WARN] '{mission_name}' 미션에 childId가 없어 건너뜁니다.")
+            fail_count += 1
+            continue
+
+        # 해당 childId에 대한 authToken 가져오기
+        specific_auth_token = auth_tokens_by_child.get(child_id)
+
+        if not specific_auth_token:
+            print(f"  [WARN] childId '{child_id}'에 대한 authToken을 찾을 수 없어 '{mission_name}' 미션을 건너뜁니다.")
+            fail_count += 1
+            continue
+        
+        result = False
+        # 각 헬퍼 함수에 specific_auth_token 전달
+        if comTypeNm == "아람어스":
+            result = _complete_aram_earth_mission(specific_auth_token, mission, server)
+        elif comTypeNm == "도서관":
+            result = _complete_library_mission(specific_auth_token, mission, server)
+        elif comTypeNm == "위티TV":
+            result = _complete_witti_tv_mission(specific_auth_token, mission, server)
+        else: # 기타 "놀이터" 등
+            result = _complete_witti_mew_mission(specific_auth_token, mission, server)
+            
+        if result:
+            success_count += 1
+        else:
+            fail_count += 1
+            
+    print("------------------------------------------")
+    print(f"미션 처리 완료: 성공 {success_count}개, 실패/건너뜀 {fail_count}개")
+
+
+# 아람어스 학습 완료 처리 API
+def _complete_aram_earth_mission(authToken, mission, server):
+    try:
+        url = f"https://{server}.wittiverse.com/v2/ias/school"
+        params = {
+            "prodId" : "PI-00000000000000001",
+            "itemCd" : mission.get('itemCd'),
+            "curtniSeq" : mission.get('curtniSeq'),
+            "stdLtm" : 50,
+            "stdScore" : 0,
+            "stdTp" : "STD"
+        }
+        headers = {
+            'Authorization': f'Bearer {authToken}'
+        }
+
+        # --- 디버깅 로그 시작 ---
+        #print(f"  [DEBUG] 아람어스 요청 URL: {url}")
+        #print(f"  [DEBUG] 아람어스 요청 Headers: {headers}")
+        #print(f"  [DEBUG] 아람어스 요청 JSON Body: {params}")
+        # --- 디버깅 로그 끝 ---
+
+        response = requests.post(url, headers=headers, json=params, timeout=20)
+
+        # --- 디버깅 로그 시작 ---
+        #print(f"  [DEBUG] 아람어스 응답 Status Code: {response.status_code}")
+        #print(f"  [DEBUG] 아람어스 응답 Body: {response.text}")
+        # --- 디버깅 로그 끝 ---
+
+        response.raise_for_status()
+
+        return response
+
+    except requests.exceptions.RequestException as e:
+        print(f"[ERROR] 학습 이력 등록 실패 (네트워크/서버 오류): {e}")
+        return None
+    except Exception as e:
+        print(f"[ERROR] 학습 이력 등록 중 예기치 않은 오류 발생: {e}")
+        return None
+
+# 도서관 학습 완료 처리 API
+def _complete_library_mission(authToken, mission, server):
+    try:
+        url = f"https://{server}.wittiverse.com/v2/ias/school/ebook"
+        params = {
+            "contsId" : mission.get('contentId'),
+            "stdLtm" : 1,
+            "contsLtm" : 1,
+            "stdTp" : "STD",
+            "latestPage": 20
+        }
+        headers = {
+            'Authorization': f'Bearer {authToken}'
+        }
+
+        # --- 디버깅 로그 시작 ---
+        #print(f"  [DEBUG] 도서관 요청 URL: {url}")
+        #print(f"  [DEBUG] 도서관 요청 Headers: {headers}")
+        #print(f"  [DEBUG] 도서관 요청 JSON Body: {params}")
+        # --- 디버깅 로그 끝 ---
+
+        response = requests.post(url, headers=headers, json=params, timeout=20)
+
+        # --- 디버깅 로그 시작 ---
+        #print(f"  [DEBUG] 도서관 응답 Status Code: {response.status_code}")
+        #print(f"  [DEBUG] 도서관 응답 Body: {response.text}")
+        # --- 디버깅 로그 끝 ---
+
+        response.raise_for_status()
+
+        return response
+
+    except requests.exceptions.RequestException as e:
+        print(f"[ERROR] 학습 이력 등록 실패 (네트워크/서버 오류): {e}")
+        return None
+    except Exception as e:
+        print(f"[ERROR] 학습 이력 등록 중 예기치 않은 오류 발생: {e}")
+        return None
+
+# 위티TV 학습 완료 처리 API
+def _complete_witti_tv_mission(authToken, mission, server):
+    try:
+        url = f"https://{server}.wittiverse.com/v2/ias/tv"
+        params = {
+            "contsId" : mission.get('contentId'),
+            "stdLtm" : 1,
+            "contsLtm" : 1,
+            "stdTp" : "STD"
+        }
+        headers = {
+            'Authorization': f'Bearer {authToken}'
+        }
+
+        # --- 디버깅 로그 시작 ---
+        #print(f"  [DEBUG] 위티TV 요청 URL: {url}")
+        #print(f"  [DEBUG] 위티TV 요청 Headers: {headers}")
+        #print(f"  [DEBUG] 위티TV 요청 JSON Body: {params}")
+        # --- 디버깅 로그 끝 ---
+
+        response = requests.post(url, headers=headers, json=params, timeout=20)
+
+        # --- 디버깅 로그 시작 ---
+        #print(f"  [DEBUG] 위티TV 응답 Status Code: {response.status_code}")
+        #print(f"  [DEBUG] 위티TV 응답 Body: {response.text}")
+        # --- 디버깅 로그 끝 ---
+
+        response.raise_for_status()
+
+        return response
+
+    except requests.exceptions.RequestException as e:
+        print(f"[ERROR] 학습 이력 등록 실패 (네트워크/서버 오류): {e}")
+        return None
+    except Exception as e:
+        print(f"[ERROR] 학습 이력 등록 중 예기치 않은 오류 발생: {e}")
+        return None
+
+# MEW 학습 완료 처리 API
+def _complete_witti_mew_mission(authToken, mission, server):
+    try:
+        url = f"https://{server}.wittiverse.com/v2/ias/school/playground"
+        params = {
+            "contsId" : mission.get('contentId'),
+            "stdLtm" : 1,
+            "contsLtm" : 1,
+            "stdTp" : "STD"
+        }
+        headers = {
+            'Authorization': f'Bearer {authToken}'
+        }
+
+        # --- 디버깅 로그 시작 ---
+        #print(f"  [DEBUG] MEW 요청 URL: {url}")
+        #print(f"  [DEBUG] MEW 요청 Headers: {headers}")
+        #print(f"  [DEBUG] MEW 요청 JSON Body: {params}")
+        # --- 디버깅 로그 끝 ---
+
+        response = requests.post(url, headers=headers, json=params, timeout=20)
+
+        # --- 디버깅 로그 시작 ---
+        #print(f"  [DEBUG] MEW 응답 Status Code: {response.status_code}")
+        #print(f"  [DEBUG] MEW 응답 Body: {response.text}")
+        # --- 디버깅 로그 끝 ---
+
+        response.raise_for_status()
+
+        return response
+
+    except requests.exceptions.RequestException as e:
+        print(f"[ERROR] 학습 이력 등록 실패 (네트워크/서버 오류): {e}")
+        return None
+    except Exception as e:
+        print(f"[ERROR] 학습 이력 등록 중 예기치 않은 오류 발생: {e}")
         return None
 
 
@@ -186,3 +422,49 @@ def get_school_aram_content(authToken, subjCd, itemCd, curtnSeq, server):
     except Exception as e:
         print(f"[ERROR] 위티스쿨 커리큘럼 조회 중 예기치 않은 오류 발생: {e}")
         return None, "", []
+
+# 이슈 토큰 발급 API (모든 자녀의 토큰 발급) - 오늘의 미션 전용
+def login_step2_for_all_children(refreshToken, childIds, server):
+    """
+    2차 로그인(토큰발급): 모든 자녀의 {childId: authToken} 딕셔너리를 반환
+    """
+    auth_tokens_by_child = {}
+    
+    if not childIds:
+        print("[ERROR] 2차 로그인 실패: 대상 자녀 ID 목록이 비어있습니다.")
+        return {} # 빈 딕셔너리 반환
+
+    url = f"https://{server}.wittiverse.com/v2/authenticate/token/issue"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {refreshToken}",
+        "X-device-info": "QW5kcm9pZC4zMzo6OlI5VFgyMDJHNUFFTTo6OlI5VFgyMDJHNUFFTTo6OktOT1g6OjpTTS1YMjE2Ojo6YXBwLjE0Ojo6"
+    }
+
+    print(f"\n--- 모든 자녀의 2차 로그인(토큰 발급) 시작 ---")
+    for child_id in childIds:
+        try:
+            params = {"childId": child_id}
+            
+            print(f"  - 2차 로그인 요청 (childId: {child_id})")
+            resp = requests.get(url, headers=headers, params=params, timeout=20)
+            resp.raise_for_status()
+
+            data = resp.json()
+            authToken = data.get("result", {}).get("authToken")
+
+            if authToken:
+                auth_tokens_by_child[child_id] = authToken
+                print(f"    -> 성공 (childId: {child_id})")
+            else:
+                print(f"    -> 실패: 토큰을 찾을 수 없습니다 (childId: {child_id})")
+        
+        except requests.exceptions.RequestException as e:
+            print(f"    -> [ERROR] 2차 로그인 실패 (네트워크/서버 오류): {e} (childId: {child_id})")
+        except (json.JSONDecodeError, KeyError) as e:
+            print(f"    -> [ERROR] 2차 로그인 응답 데이터 파싱 실패: {e} (childId: {child_id})")
+        except Exception as e:
+            print(f"    -> [ERROR] 2차 로그인 중 예기치 않은 오류 발생: {e} (childId: {child_id})")
+    
+    print("------------------------------------------")
+    return auth_tokens_by_child
