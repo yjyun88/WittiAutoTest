@@ -315,7 +315,7 @@ def _complete_witti_mew_mission(authToken, mission, server):
     try:
         url = f"https://{server}.wittiverse.com/v2/ias/school/playground"
         params = {
-            "contsId" : mission.get('contentId'),
+            "contsId" : mission.get('comCd'),
             "stdLtm" : 1,
             "contsLtm" : 1,
             "stdTp" : "STD"
