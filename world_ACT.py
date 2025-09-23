@@ -13,6 +13,7 @@ from check_video import is_video_playing
 from create_report import create_report, input_excel
 
 BASE_RESOLUTION = (1920, 1200)
+BASE_RESOLUTION2 = (2304, 1440)
 
 # 템플릿 미리 로드
 step_templates = {
@@ -20,7 +21,7 @@ step_templates = {
     for i in range(1, 3)
 }
 book_templates = {
-    i: Template(os.path.join(r"button_images\witti_world", f"{i}.png"), threshold=0.93, resolution=BASE_RESOLUTION)
+    i: Template(os.path.join(r"button_images\witti_world", f"{i}.png"), threshold=0.93, resolution=BASE_RESOLUTION2)
     for i in range(1, 14)
 }
 aram_play = Template(r"button_images\aram_play.png", threshold=0.9, resolution=BASE_RESOLUTION)
