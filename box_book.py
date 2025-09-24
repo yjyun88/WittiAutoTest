@@ -1,6 +1,6 @@
 import sys, os
 
-from airtest.core.api import wait
+from airtest.core.api import wait, sleep
 
 from Touch_template import touch_template
 from box_ACT import capture_screen
@@ -13,6 +13,7 @@ BASE_RESOLUTION = (1920, 1200)
 
 before_tpl = Template(r"button_images\book_cate.png", resolution=BASE_RESOLUTION)
 after_tpl_1 = Template(r"button_images\book_exit.png", resolution=BASE_RESOLUTION)
+after_tpl_1_1 = Template(r"button_images\book_exit_t.png", resolution=BASE_RESOLUTION)
 after_tpl_2 = Template(r"button_images\exit_y.png", threshold=0.85, resolution=BASE_RESOLUTION)
 
 
@@ -57,7 +58,8 @@ def touch_booklist_images(
             wait(after_tpl_1, timeout=60)
             
             # 2) 컨텐츠 실행 확인
-            video_playing = is_video_playing(timeout=30, interval=0.1, diff_threshold=0.2)  
+            video_playing = is_video_playing(timeout=30, interval=0.1, diff_threshold=0.2)
+            sleep(1)
             capture_path, base = capture_screen(img_path, childNm)
             
             # 3) 엑셀 Report 생성, 데이터 삽입    
@@ -77,7 +79,10 @@ def touch_booklist_images(
                 )
           
             # 5) 컨텐츠 종료
-            touch_template(after_tpl_1, 6)
+            bool = touch_template(after_tpl_1, 6)
+            if not bool:
+                touch_template(after_tpl_1_1)
+
             wait(after_tpl_2)
             touch_template(after_tpl_2, 0)
 

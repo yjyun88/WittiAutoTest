@@ -1,5 +1,3 @@
-import time
-import os
 import cv2
 
 from airtest.core.api import *
@@ -11,6 +9,7 @@ from datetime import datetime
 from OCR_select_class import select_class
 
 BASE_RESOLUTION = (1920, 1200)
+attendance_tpl = Template(r"button_images\attendance_ok.png", resolution=BASE_RESOLUTION)
 
 # 설정 > 클래스 선택
 def class_select(childNm):
@@ -27,17 +26,20 @@ def class_select(childNm):
     # 설정 진입
     touch_template(setup_tpl, region_code=6)
     print("설정 버튼 선택")
-    time.sleep(2)
+    sleep(2)
     
     # 클래스 선택
     print("클래스 선택 : ", childNm)
     select_class(childNm)
-    time.sleep(2)
+    sleep(2)
 
     # 대시보드로 이동(뒤로가기)
     touch_template(back_tpl)
     print("뒤로가기 버튼 선택")
-    time.sleep(2)
+    sleep(2)
+
+    if exists(attendance_tpl):
+        touch_template(attendance_tpl)
 
 
 # 현재 디바이스 화면을 캡처하여 분류별/날짜별 폴더에 저장
@@ -74,7 +76,7 @@ def capture_screen(img_path, childNm, save_dir="screen_captures"):
         pil_img = Image.fromarray(img_rgb)
         pil_img.save(capture_path)
         print(f"[CAPTURE] 화면 저장됨 → {capture_path}")
-        time.sleep(1)        
+        sleep(1)
         
         return capture_path, base
 

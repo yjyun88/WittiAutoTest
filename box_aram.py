@@ -14,7 +14,7 @@ after_tpl = [
     Template(r"button_images\aram_exit.png", threshold=0.85, resolution=BASE_RESOLUTION),
     Template(r"button_images\exit_y.png"),
 ]
-aram_play = Template(r"button_images\aram_play.png", threshold=0.9, resolution=BASE_RESOLUTION)
+aram_play = Template(r"button_images\aram_play.png", threshold=0.8, resolution=BASE_RESOLUTION)
 
 
 # 아람 커리큘럼 선택
@@ -65,9 +65,11 @@ def touch_aramlist_images(
 
             print("======================================== 컨텐츠 실행 대기 ========================================")
             wait(Template(r"button_images\aram_exit.png"), timeout=60)
+            sleep(10)
 
             # 1-1) 컨텐츠 화면에 play 버튼 있으면 버튼 누르기
             if exists(aram_play):
+                sleep(5)
                 touch_template(aram_play)
                 sleep(5)
 

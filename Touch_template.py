@@ -5,8 +5,8 @@ from airtest.core.cv import Template as AirtestTemplate
 
 def touch_template(template,
                    region_code: int | None = 5,   # ← 기본값 None: ROI 미적용
-                   max_retries: int = 5,
-                   wait: float = 3.0,
+                   max_retries: int = 3,
+                   wait: float = 2.0,
                    # scale options
                    scale_min: float = 0.7,
                    scale_max: float = 1.3,
