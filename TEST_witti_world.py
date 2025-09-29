@@ -1,10 +1,7 @@
-from utils import Template
+from airtest.core.api import wait, sleep, touch
 from request_API import *
 from world_ACT import *
-
 from download_thumbnails import download_thumbnails
-
-import time
 
 BASE_RESOLUTION = (1920, 1200)
 
@@ -25,14 +22,9 @@ mew_exit = Template(r"button_images\witti_world\mew_exit.png", resolution=BASE_R
 mew_exit_y = Template(r"button_images\witti_world\mew_exit_y.png", resolution=BASE_RESOLUTION)
 exit_tpl = Template(r"button_images\witti_world\school_exit.png", resolution=BASE_RESOLUTION)
 exit_y_tpl = Template(r"button_images\witti_world\school_exit_y.png", resolution=BASE_RESOLUTION)
-mew_after_tpl = [
-    Template(r"button_images\mew_down.png", resolution=BASE_RESOLUTION),
-    Template(r"button_images\mew_home.png", rgb=True, resolution=BASE_RESOLUTION)
-]
-mew_after_tpl_2 = [
-    Template(r"button_images\mew_down_9.png", resolution=BASE_RESOLUTION),
-    Template(r"button_images\mew_home.png", rgb=True, resolution=BASE_RESOLUTION)
-]
+mew_after_tpl = Template(r"button_images\mew_down.png", resolution=BASE_RESOLUTION)
+mew_after_tpl_2 = Template(r"button_images\mew_down_9.png", resolution=BASE_RESOLUTION, threshold=0.8)
+mew_home_tpl = Template(r"button_images\mew_home.png", resolution=BASE_RESOLUTION)
 
 
 # 위티스쿨 > 아람북월드 컨텐츠 검증
@@ -43,28 +35,25 @@ def check_wittiaram(width, height, authToken, subjCd, itemCd, curtnSeq, server):
 
     #광장에서 스쿨 진입
     touch_template(menu_tpl)
-    time.sleep(2)
+    wait(school_tpl, timeout=60)
     touch_template(school_tpl)
-    time.sleep(2)
-   
+    sleep(2)
+    touch((center_x, center_y))
 
     # 스쿨 진입 후 아람북월드 진입
-    touch((center_x, center_y))
-    time.sleep(5)
+    wait(enter_tpl, timeout=60)
     touch_template(enter_tpl)
-    time.sleep(5)
+    wait(aram_tpl, timeout=60)
     touch_template(aram_tpl)
-    time.sleep(10)
+    wait(aram_korean_tpl, timeout=60)
     if subjCd == 1:
         touch_template(aram_korean_tpl)
-        time.sleep(5)
     elif subjCd == 2:
         touch_template(aram_math_tpl)
-        time.sleep(5)
     elif subjCd == 3:
         touch_template(aram_science_tpl)
-        time.sleep(5)
-    
+    sleep(5)
+
     # 커리큘럼 정보 가져오기
     bookNm, subjCd, act_items = get_school_aram_content(authToken, subjCd, itemCd, curtnSeq, server)
     print(f"{subjCd} / STEP {itemCd} / {curtnSeq} 호 컨텐츠 명 : ", bookNm)
@@ -84,9 +73,9 @@ def check_wittiaram(width, height, authToken, subjCd, itemCd, curtnSeq, server):
     # 광장으로 나가기
     print("아람북월드 컨텐츠 검증 종료, 광장으로 이동합니다.")
     touch_template(exit_tpl)
-    time.sleep(2)
+    wait(exit_tpl, timeout=60)
     touch_template(exit_tpl)
-    time.sleep(2)
+    wait(exit_y_tpl, timeout=60)
     touch_template(exit_y_tpl)
 
 
@@ -98,19 +87,19 @@ def check_wittimew(width, height, title_name):
 
     #광장에서 스쿨 진입
     touch_template(menu_tpl)
-    time.sleep(2)
+    wait(school_tpl, timeout=60)
     touch_template(school_tpl)
-    time.sleep(2)   
+    sleep(2)
+    touch((center_x, center_y))
 
     # 스쿨 진입 후 아람북월드 진입
-    touch((center_x, center_y))
-    time.sleep(5)
+    wait(enter_tpl, timeout=60)
     touch_template(enter_tpl)
-    time.sleep(5)
+    wait(play_tpl, timeout=60)
     touch_template(play_tpl)
-    time.sleep(10)
+    wait(mew_tpl, timeout=60)
     touch_template(mew_tpl)
-    time.sleep(15)
+    wait(mew_next, timeout=60)
 
     # 곡 메뉴 이동
     count = int(title_name.split('_')[0])
@@ -118,14 +107,18 @@ def check_wittimew(width, height, title_name):
 
     for _ in range(count-1):
         touch_template(mew_next)
-        time.sleep(1)
+        sleep(1)
 
     # 컨텐츠 검증 시작 (Song ~ Pigment)
     for i in range(12):
         img_path = fr"button_images\witti_world\mew_buttons\{i+1}.png"
         touch_template(Template(img_path))
-        time.sleep(15)
-        
+        try:
+            print("MEW 컨텐츠 재생 대기 최대 120초")
+            wait(mew_after_tpl_2, timeout=120)
+            sleep(10)
+        except Exception:
+            print("MEW 컨텐츠 재생 대기 120초 경과...")
         # 재생 버튼이 있으면 터치
         if i in (0, 6):
             ok = touch_template(play_tpl_2, region_code=0)
@@ -141,7 +134,7 @@ def check_wittimew(width, height, title_name):
 
         # 엑셀 Report 생성, 데이터 삽입
         file_path, wb, ws = create_report()
-        time.sleep(1)
+        sleep(1)
         class_name = mew_song_name
         if i+1 == 1:
             content_name = "Song"
@@ -178,40 +171,31 @@ def check_wittimew(width, height, title_name):
             capture_path,
             thumb_path
         )
-        time.sleep(3)
 
         # 컨텐츠 확인 후 닫기 동작
         if i in (7, 8):
-            for tpl in mew_after_tpl_2:
-                result = touch_template(tpl)
-                if result:
-                    print(f"{tpl} 을 찾았습니다.")
-                    time.sleep(2)
-                else:
-                    print(f"{tpl} 을 찾지 못했습니다. 재시도 합니다.")
-                    touch_template(tpl)
+            touch_template(mew_after_tpl_2, region_code=6)
+            touch_template(mew_home_tpl, region_code=6)
+            sleep(2)
         elif i == 9:
             exit_path = r"button_images\witti_world\mew_buttons\sing_along_exit.png"
-            touch_template(Template(exit_path, threshold=0.9))
-            time.sleep(5)
+            touch_template(Template(exit_path))
+            sleep(2)
         else:
-            for tpl in mew_after_tpl:
-                result = touch_template(tpl)
-                if result:
-                    print(f"{tpl} 을 찾았습니다.")
-                    time.sleep(2)
-                else:
-                    print(f"{tpl} 을 찾지 못했습니다. 재시도 합니다.")
-                    touch_template(tpl)
+            result = touch_template(mew_after_tpl, region_code=6)
+            if not result:
+                touch_template(mew_after_tpl_2, region_code=6)
+            touch_template(mew_home_tpl, region_code=6)
+            sleep(2)
 
     # 광장으로 나가기
     print("MEW 컨텐츠 검증 종료, 광장으로 이동합니다.")
     touch_template(mew_exit)
-    time.sleep(1)
+    sleep(1)
     touch_template(mew_exit_y)
-    time.sleep(2)
+    sleep(1)
     touch_template(exit_tpl)
-    time.sleep(2)
+    sleep(1)
     touch_template(exit_tpl)
-    time.sleep(2)
+    sleep(1)
     touch_template(exit_y_tpl)
