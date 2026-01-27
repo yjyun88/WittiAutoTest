@@ -21,7 +21,7 @@ step_templates = {
     for i in range(1, 3)
 }
 book_templates = {
-    i: Template(os.path.join(r"button_images\witti_world", f"{i}.png"), threshold=0.93, resolution=BASE_RESOLUTION2)
+    i: Template(os.path.join(r"button_images\witti_world", f"{i}.png"), threshold=0.95, resolution=BASE_RESOLUTION2)
     for i in range(1, 14)
 }
 aram_play = Template(r"button_images\aram_play.png", threshold=0.9, resolution=BASE_RESOLUTION)
