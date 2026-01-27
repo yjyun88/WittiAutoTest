@@ -94,10 +94,13 @@ def check_wittimew(width, height, title_name):
 
     # 스쿨 진입 후 아람북월드 진입
     wait(enter_tpl, timeout=60)
+    sleep(1)
     touch_template(enter_tpl)
     wait(play_tpl, timeout=60)
+    sleep(1)
     touch_template(play_tpl)
     wait(mew_tpl, timeout=60)
+    sleep(1)
     touch_template(mew_tpl)
     wait(mew_next, timeout=60)
 
