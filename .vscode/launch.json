@@ -2,12 +2,25 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Python: 실행 (터미널)",
+      "name": "Python: Main.py",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/Main.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true,
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}"
+      }
+    },
+    {
+      "name": "Python: Current File",
       "type": "debugpy",
       "request": "launch",
       "program": "${file}",
       "console": "integratedTerminal",
       "cwd": "${workspaceFolder}",
+      "justMyCode": true,
       "env": {
         "PYTHONPATH": "${workspaceFolder}"
       }
