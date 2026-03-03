@@ -21,7 +21,7 @@ step_templates = {
     for i in range(1, 3)
 }
 book_templates = {
-    i: Template(os.path.join(r"button_images\witti_world", f"{i}.png"), threshold=0.95, resolution=BASE_RESOLUTION2)
+    i: Template(os.path.join(r"button_images\witti_world", f"{i}.png"), threshold=0.95, resolution=BASE_RESOLUTION)
     for i in range(1, 14)
 }
 aram_play = Template(r"button_images\aram_play.png", threshold=0.9, resolution=BASE_RESOLUTION)
@@ -42,7 +42,7 @@ DEBUG_DIR = "debug_images"
 
 # STEP 선택, 호 찾기
 def select_step(step_num, book_num, width, height):
-    """
+    """111111
     1) step_num == 2일 때만 단계 이미지 터치
     2) book_num 리스트 이미지를 찾아서 좌표 반환
     """

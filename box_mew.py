@@ -68,12 +68,12 @@ def touch_mewlist_images(
                 continue
 
             print("======================================== 컨텐츠 실행 대기 ========================================")
-            sleep(25)
+            sleep(15)
             
             # 2) 컨텐츠 화면에 play 버튼 있으면 버튼 누르기
             if exists(play_tpl):
                touch_template(play_tpl)
-               sleep(5)
+               sleep(4)
 
 
             # 2-1) 컨텐츠 실행 확인
