@@ -12,8 +12,8 @@ from check_video import is_video_playing
 BASE_RESOLUTION = (1920, 1200)
 
 before_tpl = Template(r"button_images\book_cate.png", resolution=BASE_RESOLUTION)
-after_tpl_1 = Template(r"button_images\book_exit.png", resolution=BASE_RESOLUTION)
-after_tpl_1_1 = Template(r"button_images\book_exit_t.png", resolution=BASE_RESOLUTION)
+after_tpl_1 = Template(r"button_images\book_exit.png", threshold=0.6, resolution=BASE_RESOLUTION)
+after_tpl_1_1 = Template(r"button_images\book_exit_t.png", threshold=0.6, resolution=BASE_RESOLUTION)
 after_tpl_2 = Template(r"button_images\exit_y.png", threshold=0.85, resolution=BASE_RESOLUTION)
 
 

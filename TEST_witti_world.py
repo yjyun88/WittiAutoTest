@@ -103,6 +103,7 @@ def check_wittimew(width, height, title_name):
     sleep(1)
     touch_template(mew_tpl)
     wait(mew_next, timeout=60)
+    sleep(3)
 
     # 곡 메뉴 이동
     count = int(title_name.split('_')[0])
