@@ -1,51 +1,35 @@
-#AutoTest.py
+﻿# AutoTest.py
 
-from airtest.core.api import device, time, connect_device
+from airtest.core.api import connect_device, device, time
 
 from TEST_witti_box import check_wittibox
 from TEST_witti_world import check_wittiaram, check_wittimew
-from request_API import login_step1, login_step2
 from download_thumbnails import cleanup_thumbnails
+from request_API import get_study_access_auth
 
 
 def AutoTest_Start(
-        btn_name,
-        device_name,
-        inputId,
-        inputPwd,
-        subjCd,
-        itemCd,
-        curtnSeq,
-        title_name,
-        server
+    btn_name,
+    device_name,
+    inputId,
+    inputPwd,
+    subjCd,
+    itemCd,
+    curtnSeq,
+    title_name,
+    server,
+    study_access_auth_token=None,
 ):
-
-#======================================================================================================
-    # 0) 디바이스 연결
-
+    # 0) Connect device
     connect_device(f"Android://127.0.0.1:5037/{device_name}?cap_method=MINICAP")
 
-#======================================================================================================
-
-    
-    """ 
-        NBOM001 / dlrtks1122@@
-        MGguest001 ~ MGguest015 / mini1122@@
-        IKSAN0001 ~ IKSAN0020, IKSAN0060, IKSAN0080, IKSAN0100 / dlrtks1122@@ (Dev는 1111)
-        solmips0001~0012 / solmips1122@@
-        smps001~020 / smps1122@@
-        jinchun001~032 / jinchun1122@@
-
-        학습 리포트용 : reporttest01~05 / mini1122@@
-    """
-
-   # 2) 현재 연결된 디바이스 해상도 가져오기 (width, height)
+    # 1) Read current device resolution
     width, height = device().get_current_resolution()
     if height > width:
         width, height = height, width
-    print(f"현재 디바이스 해상도 : {width} * {height}")
+    print(f"Current device resolution: {width} x {height}")
 
-    print("현재 서버 선택 상태 : ", server)
+    print("Current server:", server)
     match server:
         case "Prod":
             server = "api"
@@ -56,41 +40,35 @@ def AutoTest_Start(
         case "Total-Test":
             server = "total-test-api"
 
-    # 3) 1차 로그인 : 통합 로그인 API 호출 (refreshToken, childIds)
-    refreshToken, childIds, childNms = login_step1(inputId, inputPwd, server)
-    print("로그인 STEP1 → refreshToken:", refreshToken)
-    print("로그인 STEP1 → childIds:", childIds)
-    print("로그인 STEP1 → childNms:", childNms)
+    # 4) Use memNm, memId and authToken saved by study/access
+    mem_nm, mem_id, saved_auth_token = get_study_access_auth()
+    authToken = study_access_auth_token or saved_auth_token
+    if not authToken:
+        print("[ERROR] study/access authToken is missing. Cannot run test.")
+        return
+    print("Using study/access authToken:", authToken[:12] + "...")
 
-
-    # 4) 2차 로그인 : 이슈 토큰 발급 API 호출 (authToken)
-    authToken = login_step2(refreshToken, childIds, server)
-    print("로그인 STEP2 → authToken:", authToken)
-
-
-    # 5) 이미지 다운로드 폴더 정리 : \downloaded_images
+    # 5) Cleanup downloaded thumbnail directory before test
     cleanup_thumbnails()
     time.sleep(1)
 
     if btn_name == "pushButton_2":
-        # 6) 런처 컨텐츠 검증 실행
-        check_wittibox(childIds, childNms, authToken, server)
+        # 6) WittiBox content validation
+        if not mem_id or not mem_nm:
+            print("[ERROR] study/access memId/memNm is missing. Cannot run WittiBox test.")
+            return
+        check_wittibox([mem_id], [mem_nm], authToken, server)
 
-     
     elif btn_name == "pushButton_3":
-        # 7-1) 월드 > 스쿨 > 아람북월드 컨텐츠 검증
+        # 7-1) Arambook world content validation
         check_wittiaram(width, height, authToken, subjCd, itemCd, curtnSeq, server)
 
     elif btn_name == "pushButton_7":
-        # 7-2 월드 > 스쿨 > MEW 컨텐츠 검증
+        # 7-2) MEW content validation
         check_wittimew(width, height, title_name)
 
-
-    # 6) 이미지 다운로드 폴더 정리 : \downloaded_images
+    # Final cleanup
     cleanup_thumbnails()
     time.sleep(1)
 
-
-    # 컨텐츠 검증 종료
-    print("============================================== AutoTest 수행 완료 ==============================================")
-
+    print("============================================== AutoTest completed ==============================================")
