@@ -6,7 +6,7 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>852</width>
+    <width>1685</width>
     <height>879</height>
    </rect>
   </property>
@@ -19,7 +19,7 @@
      <rect>
       <x>30</x>
       <y>90</y>
-      <width>301</width>
+      <width>231</width>
       <height>61</height>
      </rect>
     </property>
@@ -31,7 +31,7 @@
       <rect>
        <x>30</x>
        <y>20</y>
-       <width>241</width>
+       <width>181</width>
        <height>21</height>
       </rect>
      </property>
@@ -41,7 +41,7 @@
     <property name="geometry">
      <rect>
       <x>60</x>
-      <y>230</y>
+      <y>630</y>
       <width>111</width>
       <height>91</height>
      </rect>
@@ -55,7 +55,7 @@
      <rect>
       <x>30</x>
       <y>160</y>
-      <width>301</width>
+      <width>231</width>
       <height>61</height>
      </rect>
     </property>
@@ -67,7 +67,7 @@
       <rect>
        <x>30</x>
        <y>20</y>
-       <width>241</width>
+       <width>181</width>
        <height>21</height>
       </rect>
      </property>
@@ -104,7 +104,7 @@
     <property name="geometry">
      <rect>
       <x>360</x>
-      <y>230</y>
+      <y>630</y>
       <width>461</width>
       <height>91</height>
      </rect>
@@ -301,10 +301,10 @@
    <widget class="QGroupBox" name="groupBox_6">
     <property name="geometry">
      <rect>
-      <x>20</x>
-      <y>430</y>
+      <x>850</x>
+      <y>20</y>
       <width>801</width>
-      <height>391</height>
+      <height>801</height>
      </rect>
     </property>
     <property name="title">
@@ -316,7 +316,7 @@
        <x>10</x>
        <y>20</y>
        <width>781</width>
-       <height>361</height>
+       <height>771</height>
       </rect>
      </property>
     </widget>
@@ -325,7 +325,7 @@
     <property name="geometry">
      <rect>
       <x>200</x>
-      <y>230</y>
+      <y>630</y>
       <width>111</width>
       <height>91</height>
      </rect>
@@ -364,7 +364,7 @@
     <property name="geometry">
      <rect>
       <x>360</x>
-      <y>330</y>
+      <y>730</y>
       <width>461</width>
       <height>91</height>
      </rect>
@@ -456,7 +456,7 @@
     <property name="geometry">
      <rect>
       <x>200</x>
-      <y>330</y>
+      <y>730</y>
       <width>111</width>
       <height>91</height>
      </rect>
@@ -513,7 +513,7 @@ Clear</string>
     <property name="geometry">
      <rect>
       <x>60</x>
-      <y>330</y>
+      <y>730</y>
       <width>111</width>
       <height>91</height>
      </rect>
@@ -523,13 +523,72 @@ Clear</string>
 완료</string>
     </property>
    </widget>
+   <widget class="QGroupBox" name="groupBox_10">
+    <property name="geometry">
+     <rect>
+      <x>30</x>
+      <y>230</y>
+      <width>381</width>
+      <height>371</height>
+     </rect>
+    </property>
+    <property name="title">
+     <string>Select Class</string>
+    </property>
+    <widget class="QListView" name="listView">
+     <property name="geometry">
+      <rect>
+       <x>20</x>
+       <y>20</y>
+       <width>341</width>
+       <height>331</height>
+      </rect>
+     </property>
+    </widget>
+   </widget>
+   <widget class="QGroupBox" name="groupBox_11">
+    <property name="geometry">
+     <rect>
+      <x>440</x>
+      <y>230</y>
+      <width>381</width>
+      <height>371</height>
+     </rect>
+    </property>
+    <property name="title">
+     <string>Select Student</string>
+    </property>
+    <widget class="QListView" name="listView_2">
+     <property name="geometry">
+      <rect>
+       <x>20</x>
+       <y>20</y>
+       <width>341</width>
+       <height>331</height>
+      </rect>
+     </property>
+    </widget>
+   </widget>
+   <widget class="QPushButton" name="pushButton_10">
+    <property name="geometry">
+     <rect>
+      <x>280</x>
+      <y>90</y>
+      <width>61</width>
+      <height>131</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>로그인</string>
+    </property>
+   </widget>
   </widget>
   <widget class="QMenuBar" name="menubar">
    <property name="geometry">
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>852</width>
+     <width>1685</width>
      <height>21</height>
     </rect>
    </property>

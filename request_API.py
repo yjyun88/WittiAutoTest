@@ -1,8 +1,11 @@
-import requests
+﻿import requests
 import base64
 import json
 
-# from sympy.strategies.core import switch # 사용하지 않으므로 제거
+STUDY_ACCESS_MEM_NM = None
+STUDY_ACCESS_MEM_ID = None
+STUDY_ACCESS_AUTH_TOKEN = None
+
 
 # 통합 로그인 API
 def login_step1(inputId, inputPwd, server):
@@ -50,6 +53,140 @@ def login_step1(inputId, inputPwd, server):
         return None, [], []
 
 
+def class_list(authToken, inputId, server):
+    """
+    클래스 목록 조회 API
+    GET {server}/v2/authenticate/classes/{inputId}
+    Authorization: Bearer {authToken}
+    """
+    try:
+        url = f"https://{server}.wittiverse.com/v2/authenticate/classes/{inputId}"
+        headers = {
+            "Authorization": f"Bearer {authToken}"
+        }
+
+        response = requests.get(url, headers=headers, timeout=20)
+        response.raise_for_status()
+        return response
+
+    except requests.exceptions.RequestException as e:
+        print(f"[ERROR] class_list 조회 실패 (네트워크/서버 오류): {e}")
+        return None
+    except Exception as e:
+        print(f"[ERROR] class_list 조회 중 예기치 않은 오류 발생: {e}")
+        return None
+
+
+def student_list_by_class(authToken, classId, server):
+    """
+    학생 목록 조회 API
+    GET {server}/v2/authenticate/classes?classId={classId}
+    Authorization: Bearer {authToken}
+    """
+    try:
+        url = f"https://{server}.wittiverse.com/v2/authenticate/classes"
+        params = {
+            "classId": classId
+        }
+        headers = {
+            "Authorization": f"Bearer {authToken}"
+        }
+
+        response = requests.get(url, params=params, headers=headers, timeout=20)
+        response.raise_for_status()
+        return response
+
+    except requests.exceptions.RequestException as e:
+        print(f"[ERROR] student_list 조회 실패 (네트워크/서버 오류): {e}")
+        return None
+    except Exception as e:
+        print(f"[ERROR] student_list 조회 중 예기치 않은 오류 발생: {e}")
+        return None
+
+
+def authenticate_study_access(studentId, loginId, server):
+    """
+    학습 접근 인증 API
+    POST {server}/v2/authenticate/study/access?loginTp=L&autoLoginYn=Y&ptnrId=1000
+    Body: {studentId, loginId, accessType="C"}
+    응답의 memId, authToken 을 전역 변수에 저장
+    """
+    global STUDY_ACCESS_MEM_NM, STUDY_ACCESS_MEM_ID, STUDY_ACCESS_AUTH_TOKEN
+
+    try:
+        url = f"https://{server}.wittiverse.com/v2/authenticate/study/access"
+        params = {
+            "loginTp": "L",
+            "autoLoginYn": "Y",
+            "ptnrId": "1000",
+        }
+        normalized_student_id = int(studentId) if str(studentId).isdigit() else studentId
+        headers = {
+            "Content-Type": "application/json",
+            "X-device-info": "QW5kcm9pZC4zMzo6OlI5VFgyMDJHNUFFTTo6OlI5VFgyMDJHNUFFTTo6OktOT1g6OjpTTS1YMjE2Ojo6YXBwLjE0Ojo6",
+        }
+        body = {
+            "studentId": normalized_student_id,
+            "loginId": loginId,
+            "accessType": "C",
+        }
+
+        response = requests.post(
+            url,
+            params=params,
+            headers=headers,
+            json=body,
+            timeout=20,
+        )
+        response.raise_for_status()
+
+        data = response.json()
+        result = data.get("result", {})
+        STUDY_ACCESS_MEM_NM = result.get("memNm")
+        STUDY_ACCESS_MEM_ID = result.get("memId")
+        STUDY_ACCESS_AUTH_TOKEN = result.get("authToken")
+
+        return response
+
+    except requests.exceptions.HTTPError as e:
+        status = "-"
+        resp_text = ""
+        try:
+            status = e.response.status_code if e.response is not None else "-"
+            resp_text = e.response.text if e.response is not None else ""
+        except Exception:
+            pass
+        print(
+            f"[ERROR] study/access 인증 실패 (HTTP {status}): "
+            f"studentId={studentId}, loginId={loginId}, body={resp_text}"
+        )
+        return None
+    except requests.exceptions.RequestException as e:
+        print(f"[ERROR] study/access 인증 실패 (네트워크/서버 오류): {e}")
+        return None
+    except (json.JSONDecodeError, KeyError) as e:
+        print(f"[ERROR] study/access 응답 데이터 파싱 실패: {e}")
+        return None
+    except Exception as e:
+        print(f"[ERROR] study/access 인증 중 예기치 않은 오류 발생: {e}")
+        return None
+
+
+def get_study_access_auth():
+    """
+    최신 study/access 결과 전역값 조회
+    """
+    return STUDY_ACCESS_MEM_NM, STUDY_ACCESS_MEM_ID, STUDY_ACCESS_AUTH_TOKEN
+
+
+def set_study_access_auth(mem_nm, mem_id, auth_token):
+    """
+    study/access 전역값 수동 설정
+    """
+    global STUDY_ACCESS_MEM_NM, STUDY_ACCESS_MEM_ID, STUDY_ACCESS_AUTH_TOKEN
+    STUDY_ACCESS_MEM_NM = mem_nm
+    STUDY_ACCESS_MEM_ID = mem_id
+    STUDY_ACCESS_AUTH_TOKEN = auth_token
 # 이슈 토큰 발급 API
 def login_step2(refreshToken, childIds, server):
     """
@@ -468,3 +605,4 @@ def login_step2_for_all_children(refreshToken, childIds, server):
     
     print("------------------------------------------")
     return auth_tokens_by_child
+
