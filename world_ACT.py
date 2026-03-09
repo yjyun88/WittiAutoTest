@@ -116,6 +116,7 @@ def imread_unicode(path):
 def match_and_touch_roi(roi, top, subjCd, curtnSeq, act_items, saved_files):
 
     for idx, (action, tpl) in enumerate(action_templates.items(), start=1):
+        started_at = time.perf_counter()
         # 템플릿 이미지 로드 (OpenCV BGR)
         tpl_bgr = imread_unicode(tpl.filename)
         if tpl_bgr is None:
@@ -184,7 +185,8 @@ def match_and_touch_roi(roi, top, subjCd, curtnSeq, act_items, saved_files):
             wb,
             ws,
             capture_path,
-            thumb_path
+            thumb_path,
+            duration_sec=round(time.perf_counter() - started_at, 2),
         )
         time.sleep(1)
 
