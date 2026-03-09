@@ -6,7 +6,7 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>1685</width>
+    <width>1820</width>
     <height>879</height>
    </rect>
   </property>
@@ -301,9 +301,9 @@
    <widget class="QGroupBox" name="groupBox_6">
     <property name="geometry">
      <rect>
-      <x>850</x>
+      <x>830</x>
       <y>20</y>
-      <width>801</width>
+      <width>960</width>
       <height>801</height>
      </rect>
     </property>
@@ -313,10 +313,10 @@
     <widget class="QPlainTextEdit" name="plainTextEdit">
      <property name="geometry">
       <rect>
-       <x>10</x>
+       <x>20</x>
        <y>20</y>
-       <width>781</width>
-       <height>771</height>
+       <width>920</width>
+       <height>765</height>
       </rect>
      </property>
     </widget>
@@ -502,11 +502,6 @@ Clear</string>
        <string>Dev</string>
       </property>
      </item>
-     <item>
-      <property name="text">
-       <string>Total-Test</string>
-      </property>
-     </item>
     </widget>
    </widget>
    <widget class="QPushButton" name="pushButton_9">
@@ -519,8 +514,8 @@ Clear</string>
      </rect>
     </property>
     <property name="text">
-     <string>오늘의 미션
-완료</string>
+     <string>&#xBBF8;&#xC158; &#xC644;&#xB8CC;
+ (&#xC0AC;&#xC6A9;X)</string>
     </property>
    </widget>
    <widget class="QGroupBox" name="groupBox_10">
@@ -575,11 +570,25 @@ Clear</string>
       <x>280</x>
       <y>90</y>
       <width>61</width>
-      <height>131</height>
+      <height>61</height>
      </rect>
     </property>
     <property name="text">
      <string>로그인</string>
+    </property>
+   </widget>
+   <widget class="QPushButton" name="pushButton_11">
+    <property name="geometry">
+     <rect>
+      <x>280</x>
+      <y>160</y>
+      <width>61</width>
+      <height>61</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>수업시작
+테스트</string>
     </property>
    </widget>
   </widget>
@@ -588,7 +597,7 @@ Clear</string>
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>1685</width>
+     <width>1820</width>
      <height>21</height>
     </rect>
    </property>

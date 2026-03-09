@@ -10,7 +10,7 @@ STUDY_ACCESS_AUTH_TOKEN = None
 # 통합 로그인 API
 def login_step1(inputId, inputPwd, server):
     """
-    1차 로그인: refreshToken과 childIds 리스트를 반환
+    1차 로그인: authToken 반환
     """
     try:
         # Base64 인코딩
@@ -34,23 +34,19 @@ def login_step1(inputId, inputPwd, server):
         resp.raise_for_status()  # 200번대 응답 코드가 아니면 예외를 발생시킴
 
         data = resp.json()
-        refreshToken = data.get("result", {}).get("refreshToken")
-        childList = data.get("result", {}).get("childList", [])
-        childIds = sorted([c["childId"] for c in childList])
-        childNms = sorted([c["childNm"] for c in childList])
-
+        authToken = data.get("result", {}).get("authToken")
         print("1차 로그인 성공")
-        return refreshToken, childIds, childNms
+        return authToken
 
     except requests.exceptions.RequestException as e:
         print(f"[ERROR] 1차 로그인 실패 (네트워크/서버 오류): {e}")
-        return None, [], []
+        return None
     except (json.JSONDecodeError, KeyError) as e:
         print(f"[ERROR] 1차 로그인 응답 데이터 파싱 실패: {e}")
-        return None, [], []
+        return None
     except Exception as e:
         print(f"[ERROR] 1차 로그인 중 예기치 않은 오류 발생: {e}")
-        return None, [], []
+        return None
 
 
 def class_list(authToken, inputId, server):
@@ -172,59 +168,92 @@ def authenticate_study_access(studentId, loginId, server):
         return None
 
 
+def authenticate_study_access_detailed(studentId, loginId, server):
+    """
+    study/access 호출 상세 결과 반환 (HTTP 에러 포함)
+    return dict:
+      {
+        "ok": bool,
+        "status_code": int|None,
+        "data": dict|None,
+        "error": str|None
+      }
+    """
+    global STUDY_ACCESS_MEM_NM, STUDY_ACCESS_MEM_ID, STUDY_ACCESS_AUTH_TOKEN
+
+    try:
+        url = f"https://{server}.wittiverse.com/v2/authenticate/study/access"
+        params = {
+            "loginTp": "L",
+            "autoLoginYn": "Y",
+            "ptnrId": "1000",
+        }
+        normalized_student_id = int(studentId) if str(studentId).isdigit() else studentId
+        headers = {
+            "Content-Type": "application/json",
+            "X-device-info": "QW5kcm9pZC4zMzo6OlI5VFgyMDJHNUFFTTo6OlI5VFgyMDJHNUFFTTo6OktOT1g6OjpTTS1YMjE2Ojo6YXBwLjE0Ojo6",
+        }
+        body = {
+            "studentId": normalized_student_id,
+            "loginId": loginId,
+            "accessType": "C",
+        }
+
+        response = requests.post(
+            url,
+            params=params,
+            headers=headers,
+            json=body,
+            timeout=20,
+        )
+
+        status_code = response.status_code
+        data = None
+        try:
+            data = response.json()
+        except Exception:
+            data = None
+
+        if response.ok:
+            result = (data or {}).get("result", {})
+            STUDY_ACCESS_MEM_NM = result.get("memNm")
+            STUDY_ACCESS_MEM_ID = result.get("memId")
+            STUDY_ACCESS_AUTH_TOKEN = result.get("authToken")
+            return {
+                "ok": True,
+                "status_code": status_code,
+                "data": data,
+                "error": None,
+            }
+
+        return {
+            "ok": False,
+            "status_code": status_code,
+            "data": data,
+            "error": response.text,
+        }
+
+    except requests.exceptions.RequestException as e:
+        return {
+            "ok": False,
+            "status_code": None,
+            "data": None,
+            "error": str(e),
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "status_code": None,
+            "data": None,
+            "error": str(e),
+        }
+
+
 def get_study_access_auth():
     """
     최신 study/access 결과 전역값 조회
     """
     return STUDY_ACCESS_MEM_NM, STUDY_ACCESS_MEM_ID, STUDY_ACCESS_AUTH_TOKEN
-
-
-def set_study_access_auth(mem_nm, mem_id, auth_token):
-    """
-    study/access 전역값 수동 설정
-    """
-    global STUDY_ACCESS_MEM_NM, STUDY_ACCESS_MEM_ID, STUDY_ACCESS_AUTH_TOKEN
-    STUDY_ACCESS_MEM_NM = mem_nm
-    STUDY_ACCESS_MEM_ID = mem_id
-    STUDY_ACCESS_AUTH_TOKEN = auth_token
-# 이슈 토큰 발급 API
-def login_step2(refreshToken, childIds, server):
-    """
-    2차 로그인(토큰발급): authToken 을 반환
-    """
-    try:
-        if not childIds:
-            print("[ERROR] 2차 로그인 실패: 대상 자녀 ID 목록이 비어있습니다.")
-            return None
-            
-        childId = childIds[1] if len(childIds) > 1 else childIds[0]
-        url = f"https://{server}.wittiverse.com/v2/authenticate/token/issue"
-        params = {"childId": childId}
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {refreshToken}",
-            "X-device-info": "QW5kcm9pZC4zMzo6OlI5VFgyMDJHNUFFTTo6OlI5VFgyMDJHNUFFTTo6OktOT1g6OjpTTS1YMjE2Ojo6YXBwLjE0Ojo6"
-        }
-        
-        print(f"2차 로그인 요청 (childId: {childId})")
-        resp = requests.get(url, headers=headers, params=params, timeout=20)
-        resp.raise_for_status()
-
-        data = resp.json()
-        authToken = data.get("result", {}).get("authToken")
-
-        print("2차 로그인 성공")
-        return authToken
-
-    except requests.exceptions.RequestException as e:
-        print(f"[ERROR] 2차 로그인 실패 (네트워크/서버 오류): {e}")
-        return None
-    except (json.JSONDecodeError, KeyError) as e:
-        print(f"[ERROR] 2차 로그인 응답 데이터 파싱 실패: {e}")
-        return None
-    except Exception as e:
-        print(f"[ERROR] 2차 로그인 중 예기치 않은 오류 발생: {e}")
-        return None
 
 
 # 런처 커리큘럼 호출 API

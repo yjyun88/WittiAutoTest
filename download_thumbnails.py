@@ -2,6 +2,7 @@ import os
 import requests
 import shutil
 import stat
+import re
 
 from urllib.parse import *
 from utils import output_path
@@ -50,6 +51,12 @@ def build_display_name(item: dict, target_list: str) -> str:
         return " - ".join(parts)
     return item.get("name")
 
+
+def _safe_name_fragment(value: str) -> str:
+    cleaned = re.sub(r"\s+", "_", str(value or "").strip())
+    cleaned = re.sub(r'[^0-9A-Za-z가-힣_-]', "", cleaned)
+    return cleaned[:80]
+
 def get_contentCd(item: dict, target_list: str):
     key = CONTENTCD_KEYS.get(target_list)
     return item.get(key) if key else None
@@ -64,10 +71,11 @@ def download_all_thumbnails(childNm, curriculum_data, server):
     os.makedirs(folder_abs, exist_ok=True)
     print(f"이미지는 여기 저장됨: {folder_abs}")
 
-    SERVERS_WITH_MISSION_LIST = ["dev-api", "qa-api", "api"]
+    # missionList는 썸네일 매칭 신뢰도가 낮아 다운로드 대상에서 제외
+    # ??? prefix ??? (Windows ???? ??)
+    safe_prefix = "".join("_" if c in '\\/:*?"<>|' else c for c in str(childNm))
 
-    # 서버에 따라 missionList 포함 여부
-    raw_lists = (["missionList"] if server in SERVERS_WITH_MISSION_LIST else []) + BASE_LISTS
+    raw_lists = BASE_LISTS
 
     content_info = []
     # 카테고리별 공용 인덱스(파일명/리스트명에 사용)
@@ -98,7 +106,13 @@ def download_all_thumbnails(childNm, curriculum_data, server):
             # 카테고리별 인덱스 사용
             idx = counters[target_list]
 
-            save_fname = f"{childNm}_{target_list}_{idx}{ext}"
+            hint_suffix = ""
+            if target_list == "mewList":
+                sub_name = _safe_name_fragment(item.get("subName", ""))
+                if sub_name:
+                    hint_suffix = f"--{sub_name}"
+
+            save_fname = f"{safe_prefix}_{target_list}_{idx}{hint_suffix}{ext}"
             save_path  = os.path.join(folder_abs, save_fname)
             print(f"저장 경로: {save_path}")
 
@@ -119,6 +133,7 @@ def download_all_thumbnails(childNm, curriculum_data, server):
                     "contentCd":  contentCd,
                     "name":       name,
                     "contentId":  contentId,
+                    "subjectNo":  item.get("subjectNo"),
                     "webviewUrl": webviewUrl,
                 })
 
