@@ -1,152 +1,295 @@
 import os
 import re
-
-from airtest.core.api import device, touch, sleep
-from PIL import Image, ImageFilter
 from difflib import SequenceMatcher
+
 import cv2
-import numpy as np
 import easyocr
+from airtest.core.api import device, sleep, touch
 
-#======================================================================================================
-
-# 한글 OCR을 위한 EasyOCR Reader 초기화 (GPU 사용 원하면 gpu=True)
-reader = easyocr.Reader(['ko'], gpu=True)
-
-# 디버그 이미지 저장 폴더
+_READER = None
 DEBUG_DIR = "debug_images"
 os.makedirs(DEBUG_DIR, exist_ok=True)
 
-#======================================================================================================
+# Default class list area (relative to screen): x1, y1, x2, y2
+DEFAULT_ROI_REL = (0.2917, 0.3833, 0.5000, 0.7583)
+CLASS_TEXT_ALIAS = {
+    "\ud154": "\ubca8",
+    "\ub378": "\ubca8",
+    "\ubc8c": "\ubca8",
+    "\ud0e4": "\ubca8",
+    "\ud50c": "\ud074",
+}
+CLASS_PREFIX = "\ub808\ubca8"
+SPRING_CLASS = "\ub298\ubd04"
+FULL_SCREEN_ROI = "full"
+DEFAULT_ROI = "default"
 
 
-# 설정 > 클래스 선택
-def select_class(childNm, conf_threshold=40, delay=1.0, scale=1.5, roi=None):
-    """
-    단일 텍스트(childNm)를 전처리(배경제거→샤프닝) & EasyOCR로 인식 후 터치합니다.
-    : childNm: 찾을 문자열
-    : conf_threshold: OCR 신뢰도 기준 (0~100)
-    : delay: 터치 후 대기 시간(초)
-    : scale: 기준 스케일 배율 (baseline DPI=160 대비)
-    : roi: (x1,y1,x2,y2) 튜플로 지정된 ROI (원본 좌표), None이면 전체 화면
-    : return: True(성공) or False(실패)
-    """
-    # 1) 디바이스 DPI 및 해상도 정보
-    out_dpi = device().shell("wm density")
-    m = re.search(r"(\d+)", out_dpi)
-    dpi = int(m.group(1)) if m else 160
-    print("Device dpi 값 : ", dpi)
+def _get_reader():
+    global _READER
+    if _READER is not None:
+        return _READER
+    try:
+        _READER = easyocr.Reader(["ko"], gpu=True)
+    except Exception:
+        _READER = easyocr.Reader(["ko"], gpu=False)
+    return _READER
 
-    # 1-1) 스냅샷 & 해상도 읽기
-    img_cv = device().snapshot()
-    img_h, img_w = img_cv.shape[:2]    
-    print("Device 높이 값: ", img_h)
-    print("Device 넓이 값 : ", img_w)
 
-    # 2) 스케일 계산 및 제한
-    actual_scale = min(scale * (dpi / 160), 1.2)
-    print("actual_scale 값 : ", actual_scale)
+def _normalize_text(value):
+    return re.sub(r"[^0-9A-Za-z\uac00-\ud7a3]", "", str(value or "")).lower()
 
-    # 3) 화면 캡처 및 스케일링
-    img_resized = cv2.resize(img_cv,
-                             (int(img_w * actual_scale), int(img_h * actual_scale)),
-                             interpolation=cv2.INTER_LANCZOS4)
-    img_rgb = cv2.cvtColor(img_resized, cv2.COLOR_BGR2RGB)
 
-    # 4) ROI 상대 좌표 지정
-    roi_rel = (0.2917, 0.3833, 0.5000, 0.7583)
-    print("roi_rel 값 : ", roi_rel)
+def _normalize_class_text(value):
+    text = str(value or "")
+    text = re.sub(r"\s+", "", text)
+    for wrong, correct in CLASS_TEXT_ALIAS.items():
+        text = text.replace(wrong, correct)
+    text = _normalize_text(text)
+    if re.match(r"^\ub808[^0-9]*\d+$", text):
+        digit = re.search(r"\d+", text)
+        text = f"{CLASS_PREFIX}{digit.group(0)}"
+    return text
 
-    # 4-1) 상대→절대 좌표 변환 함수
-    def rel2abs(roi_rel, w, h):
-        x1r, y1r, x2r, y2r = roi_rel
+
+def _is_class_target(target_text):
+    target_norm = _normalize_class_text(target_text)
+    return bool(re.match(rf"^{CLASS_PREFIX}\d+$", target_norm) or target_norm == SPRING_CLASS)
+
+
+def _resolve_roi(roi, img_w, img_h):
+    if roi == DEFAULT_ROI:
+        x1r, y1r, x2r, y2r = DEFAULT_ROI_REL
         return (
-            int(x1r * w),  # x1
-            int(y1r * h),  # y1
-            int(x2r * w),  # x2
-            int(y2r * h)   # y2
+            int(x1r * img_w),
+            int(y1r * img_h),
+            int(x2r * img_w),
+            int(y2r * img_h),
         )
-
-    # 4-2) 실제 ROI 픽셀 좌표
-    roi = rel2abs(roi_rel, img_w, img_h)
-
-    # 4-3) 기존 ROI 크롭 로직에 roi 넘겨주기
+    if roi is None or roi == FULL_SCREEN_ROI:
+        return (0, 0, img_w, img_h)
     x1, y1, x2, y2 = roi
-    sx1, sy1 = int(x1 * actual_scale), int(y1 * actual_scale)
-    sx2, sy2 = int(x2 * actual_scale), int(y2 * actual_scale)
-    crop = img_rgb[sy1:sy2, sx1:sx2]
-    offset_x, offset_y = x1, y1
-
-    # 5) 그레이스케일
-    gray = cv2.cvtColor(crop, cv2.COLOR_RGB2GRAY)
-    
-    # 6) Blackhat 필터로 어두운 텍스트 강조 (light background에서 dark text 추출)
-    bh_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (10, 10))
-    blackhat = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, bh_kernel)
-
-    # 7) 대비 향상 (CLAHE)
-    clahe = cv2.createCLAHE(clipLimit=1.0, tileGridSize=(16, 16))
-    flat_eq = clahe.apply(blackhat)
-
-    # 7-1) 대비 스트레칭 (0~255 전체 구간으로)
-    flat_eq = cv2.normalize(flat_eq, None, 0, 255, cv2.NORM_MINMAX)
-    flat_eq = cv2.GaussianBlur(flat_eq, (3,3), 0)
-    
-    # 8) 이진화 (반전+Otsu) → 글자는 하얗게, 배경은 검게
-    _, thresh = cv2.threshold(
-        flat_eq, 0, 255,
-        cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
+    return (
+        max(0, int(x1)),
+        max(0, int(y1)),
+        min(img_w, int(x2)),
+        min(img_h, int(y2)),
     )
-    
-    # 8-1) 모폴로지 팽창으로 획 굵기 보강
-    close_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1,1))
-    closed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, close_kernel, iterations=1)
-    thresh = cv2.dilate(closed, close_kernel, iterations=1)
 
-    # 9) 샤프닝 (UnsharpMask) 후 배열 변환
-    pil_th = Image.fromarray(thresh)
-    sharp = pil_th.filter(ImageFilter.UnsharpMask(radius=1, percent=25, threshold=50))
-    sharp_arr = np.array(sharp)
 
-    # 10) 전처리된 이미지 저장 (디버깅용)
-    pre_path = os.path.join(DEBUG_DIR, "ocr_preprocessed.png")
-    full_res = cv2.resize(sharp_arr, (img_w, img_h), interpolation=cv2.INTER_LANCZOS4)
-    Image.fromarray(full_res).save(pre_path, dpi=(dpi, dpi))
-
-    # 11) EasyOCR 수행
-    sharp_rgb = cv2.cvtColor(sharp_arr, cv2.COLOR_GRAY2RGB)
-    results = reader.readtext(
-        sharp_rgb, 
-        detail=1
-        )
-
-    # 12) 결과 매칭 및 터치
-    # 12-1) 신뢰도 조건 통과 후보만 모으기
-    conf_cands = []
-    for bbox, text, prob in results:
-        sim = SequenceMatcher(None, text, childNm).ratio()
-        print(f"  → 후보: '{text}', 신뢰도={prob*100:.1f}%, 유사도={sim:.2f}")
-        if prob * 100 >= conf_threshold:
-            conf_cands.append((bbox, text, prob, sim))
-
-    # 12-2) 후보가 있으면 유사도 기준으로 최고값 선택
-    if conf_cands:
-        bbox, text, prob, sim = max(conf_cands, key=lambda x: x[3])
-        print(f"[select_class] 선택된 텍스트(신뢰도 통과 중 최고 유사도): '{text}', 신뢰도={prob*100:.1f}%, 유사도={sim:.2f}")
-    else:
-        print(f"[select_class] 신뢰도 {conf_threshold}% 이상인 후보가 없습니다.")
-        return False
-
-    # 12-3) 터치 좌표 계산 & 실행
+def _bbox_center(bbox):
     xs = [pt[0] for pt in bbox]
     ys = [pt[1] for pt in bbox]
-    avg_x, avg_y = sum(xs)/4, sum(ys)/4
-    cx = avg_x / actual_scale + offset_x
-    cy = avg_y / actual_scale + offset_y
+    return float(sum(xs) / 4.0), float(sum(ys) / 4.0)
+
+
+def _build_variants(crop_bgr, is_class_target=False):
+    gray = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2GRAY)
+    gray = cv2.resize(gray, None, fx=1.6, fy=1.6, interpolation=cv2.INTER_CUBIC)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    eq = clahe.apply(gray)
+    blur = cv2.GaussianBlur(eq, (3, 3), 0)
+    sharpen = cv2.addWeighted(eq, 1.5, blur, -0.5, 0)
+    _, th_inv = cv2.threshold(sharpen, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    _, th = cv2.threshold(sharpen, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    adaptive = cv2.adaptiveThreshold(
+        sharpen, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 11
+    )
+    variant_scale = 1.6
+    if is_class_target:
+        return [
+            (cv2.cvtColor(sharpen, cv2.COLOR_GRAY2RGB), variant_scale),
+            (cv2.cvtColor(th_inv, cv2.COLOR_GRAY2RGB), variant_scale),
+            (cv2.cvtColor(gray, cv2.COLOR_GRAY2RGB), variant_scale),
+        ]
+    return [
+        (cv2.cvtColor(gray, cv2.COLOR_GRAY2RGB), variant_scale),
+        (cv2.cvtColor(sharpen, cv2.COLOR_GRAY2RGB), variant_scale),
+        (cv2.cvtColor(th_inv, cv2.COLOR_GRAY2RGB), variant_scale),
+        (cv2.cvtColor(th, cv2.COLOR_GRAY2RGB), variant_scale),
+        (cv2.cvtColor(adaptive, cv2.COLOR_GRAY2RGB), variant_scale),
+    ]
+
+
+def _calc_similarity(text_norm, target_norm):
+    if not text_norm or not target_norm:
+        return 0.0
+    return SequenceMatcher(None, text_norm, target_norm).ratio()
+
+
+def _candidate_metrics(text, target_text):
+    if _is_class_target(target_text):
+        text_norm = _normalize_class_text(text)
+        target_norm = _normalize_class_text(target_text)
+    else:
+        text_norm = _normalize_text(text)
+        target_norm = _normalize_text(target_text)
+
+    sim = _calc_similarity(text_norm, target_norm)
+    contains = target_norm in text_norm or text_norm in target_norm
+    text_digits = "".join(ch for ch in text_norm if ch.isdigit())
+    target_digits = "".join(ch for ch in target_norm if ch.isdigit())
+    digit_match = bool(target_digits) and text_digits == target_digits
+    prefix_match = False
+    if target_norm == SPRING_CLASS:
+        prefix_match = text_norm == SPRING_CLASS
+    elif target_norm.startswith(CLASS_PREFIX):
+        prefix_match = text_norm.startswith(CLASS_PREFIX)
+
+    return {
+        "text_norm": text_norm,
+        "target_norm": target_norm,
+        "sim": sim,
+        "contains": contains,
+        "digit_match": digit_match,
+        "prefix_match": prefix_match,
+    }
+
+
+def _score_candidate(metrics, prob):
+    score = (metrics["sim"] * 0.72) + (max(0.0, float(prob)) * 0.13)
+    if metrics["digit_match"]:
+        score += 0.10
+    if metrics["prefix_match"]:
+        score += 0.05
+    return score
+
+
+def _is_pass_candidate(metrics, prob, min_prob):
+    if metrics["target_norm"] == SPRING_CLASS:
+        return metrics["text_norm"] == SPRING_CLASS and float(prob) >= 0.20
+    if metrics["target_norm"].startswith(CLASS_PREFIX):
+        if metrics["prefix_match"] and metrics["digit_match"] and metrics["sim"] >= 0.45:
+            return True
+        if metrics["contains"] and metrics["digit_match"]:
+            return True
+        return False
+    return (float(prob) >= min_prob and metrics["sim"] >= 0.60) or (
+        metrics["contains"] and metrics["sim"] >= 0.45
+    )
+
+
+def _pick_best_candidate(results, target_text, min_prob):
+    best = None
+    for bbox, text, prob in results:
+        metrics = _candidate_metrics(text, target_text)
+        if not metrics["text_norm"]:
+            continue
+        if not _is_pass_candidate(metrics, prob, min_prob):
+            continue
+        cand = {
+            "bbox": bbox,
+            "text": text,
+            "prob": float(prob),
+            "sim": metrics["sim"],
+            "score": _score_candidate(metrics, prob),
+        }
+        if best is None or cand["score"] > best["score"]:
+            best = cand
+    return best
+
+
+def find_text(target_text, conf_threshold=40, scale=1.3, roi=DEFAULT_ROI, max_variants=None, log_fail=True):
+    is_class_target = _is_class_target(target_text)
+    target_norm = _normalize_class_text(target_text) if is_class_target else _normalize_text(target_text)
+    if not target_norm:
+        print(f"[find_text] target='{target_text}' invalid target_norm")
+        return None
+
+    img_bgr = device().snapshot()
+    img_h, img_w = img_bgr.shape[:2]
+    x1, y1, x2, y2 = _resolve_roi(roi, img_w, img_h)
+    if x2 <= x1 or y2 <= y1:
+        print(f"[find_text] target='{target_text}' invalid roi={(x1, y1, x2, y2)}")
+        return None
+
+    crop = img_bgr[y1:y2, x1:x2]
+    scaled = cv2.resize(
+        crop,
+        (max(1, int(crop.shape[1] * scale)), max(1, int(crop.shape[0] * scale))),
+        interpolation=cv2.INTER_CUBIC,
+    )
+
+    reader = _get_reader()
+    min_prob = max(0.0, min(float(conf_threshold) / 100.0, 1.0))
+    best = None
+    best_score_seen = -1.0
+    best_variant_scale = 1.0
+    variants = _build_variants(scaled, is_class_target=is_class_target)
+    if max_variants is not None:
+        variants = variants[: max(1, int(max_variants))]
+
+    for variant, variant_scale in variants:
+        results = reader.readtext(variant, detail=1)
+        for _bbox, _text, _prob in results:
+            metrics = _candidate_metrics(_text, target_text)
+            if not metrics["text_norm"]:
+                continue
+            score = _score_candidate(metrics, _prob)
+            if score > best_score_seen:
+                best_score_seen = score
+        cand = _pick_best_candidate(results, target_text, min_prob)
+        if cand is not None and (best is None or cand["score"] > best["score"]):
+            best = cand
+            best_variant_scale = variant_scale
+        if best is not None and best["score"] >= 0.88:
+            break
+
+    if best is None:
+        if log_fail:
+            print(
+                f"[find_text] FAIL target='{target_text}' "
+                f"best_score={best_score_seen:.3f} conf_threshold={conf_threshold} "
+                f"roi={(x1, y1, x2, y2)}"
+            )
+        return None
+
+    cx_scaled, cy_scaled = _bbox_center(best["bbox"])
+    total_scale = scale * best_variant_scale
+    cx = x1 + (cx_scaled / total_scale)
+    cy = y1 + (cy_scaled / total_scale)
+    return {
+        "x": cx,
+        "y": cy,
+        "text": best["text"],
+        "prob": best["prob"],
+        "sim": best["sim"],
+        "score": best["score"],
+        "roi": (x1, y1, x2, y2),
+    }
+
+
+def select_class(childNm, conf_threshold=40, delay=1.0, scale=1.3, roi=DEFAULT_ROI, max_variants=None, log_fail=True):
+    """
+    Find target text using OCR and touch the best-matched result.
+    Returns True on success, False on failure.
+    """
+    found = find_text(
+        childNm,
+        conf_threshold=conf_threshold,
+        scale=scale,
+        roi=roi,
+        max_variants=max_variants,
+        log_fail=log_fail,
+    )
+    if not found:
+        print(f"[select_class] no match: '{childNm}'")
+        return False
+
+    debug = device().snapshot()
+    x1, y1, x2, y2 = found["roi"]
+    cv2.rectangle(debug, (x1, y1), (x2, y2), (255, 255, 0), 2)
+    cv2.circle(debug, (int(found["x"]), int(found["y"])), 8, (0, 0, 255), -1)
+    cv2.imwrite(os.path.join(DEBUG_DIR, "select_class_last.png"), debug)
+
+    print(
+        f"[select_class] hit='{found['text']}' sim={found['sim']:.2f} "
+        f"conf={found['prob']*100:.1f}% score={found['score']:.3f}"
+    )
     try:
-        touch((cx, cy))
+        touch((found["x"], found["y"]))
         sleep(delay)
         return True
     except Exception as e:
-        print(f"[select_class] touch 실패: {e}")
+        print(f"[select_class] touch failed: {e}")
         return False

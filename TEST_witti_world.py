@@ -1,12 +1,13 @@
-from airtest.core.api import wait, sleep, touch
+from airtest.core.api import exists, wait, sleep, touch
+import time as pytime
 from request_API import *
 from world_ACT import *
 from download_thumbnails import download_thumbnails
 
 BASE_RESOLUTION = (1920, 1200)
 
-menu_tpl = Template(r"button_images\witti_world\witti_menu.png", resolution=BASE_RESOLUTION)
-school_tpl = Template(r"button_images\witti_world\witti_school.png", resolution=BASE_RESOLUTION)
+menu_tpl = Template(r"button_images\witti_world\witti_menu_temp2.png", resolution=BASE_RESOLUTION)
+school_tpl = Template(r"button_images\witti_world\witti_school_temp.png", resolution=BASE_RESOLUTION)
 tv_tpl = Template(r"button_images\witti_world\witti_tv.png", resolution=BASE_RESOLUTION)
 enter_tpl = Template(r"button_images\witti_world\witti_enter.png", resolution=BASE_RESOLUTION)
 aram_tpl = Template(r"button_images\witti_world\school_aram.png", resolution=BASE_RESOLUTION)
@@ -25,33 +26,56 @@ exit_y_tpl = Template(r"button_images\witti_world\school_exit_y.png", resolution
 mew_after_tpl = Template(r"button_images\mew_down.png", resolution=BASE_RESOLUTION)
 mew_after_tpl_2 = Template(r"button_images\mew_down_9.png", resolution=BASE_RESOLUTION, threshold=0.8)
 mew_home_tpl = Template(r"button_images\mew_home.png", resolution=BASE_RESOLUTION)
+center_tpl = Template(r"button_images\witti_world\center.png", resolution=BASE_RESOLUTION)
+
+
+def _touch_required(template, *, threshold=0.65, max_retries=12, wait_sec=2.0, region_code=5, after_touch_sleep=1.0):
+    ok = touch_template(
+        template,
+        region_code=region_code,
+        threshold=threshold,
+        max_retries=max_retries,
+        wait=wait_sec,
+        scale_min=0.65,
+        scale_max=1.35,
+        scale_step=0.02,
+        after_touch_sleep=after_touch_sleep,
+    )
+    if not ok:
+        raise RuntimeError(f"Required template not found: {template}")
+    return True
+
+
+def _tap_center_until(template, center_x, center_y, *, attempts=4, wait_sec=1.0):
+    for attempt in range(1, attempts + 1):
+        print(f"[WORLD] touching center after school button at ({center_x}, {center_y}) attempt={attempt}/{attempts}")
+        touch((center_x, center_y))
+        sleep(wait_sec)
+        if exists(template):
+            print(f"[WORLD] target appeared after center tap attempt={attempt}")
+            return True
+    print(f"[WORLD] target did not appear after center taps: {template}")
+    return False
 
 
 # 위티스쿨 > 아람북월드 컨텐츠 검증
 def check_wittiaram(width, height, authToken, subjCd, itemCd, curtnSeq, server):
 
-    # 화면 중앙 좌표
-    center_x, center_y = width // 2, height // 2
-
     #광장에서 스쿨 진입
-    touch_template(menu_tpl)
-    wait(school_tpl, timeout=60)
-    touch_template(school_tpl)
+    _touch_required(menu_tpl, threshold=0.62)
+    _touch_required(school_tpl, threshold=0.60)
     sleep(2)
-    touch((center_x, center_y))
+    _touch_required(center_tpl, threshold=0.60, max_retries=4, wait_sec=1.0)
 
     # 스쿨 진입 후 아람북월드 진입
-    wait(enter_tpl, timeout=60)
-    touch_template(enter_tpl)
-    wait(aram_tpl, timeout=60)
-    touch_template(aram_tpl)
-    wait(aram_korean_tpl, timeout=60)
+    _touch_required(enter_tpl, threshold=0.60)
+    _touch_required(aram_tpl, threshold=0.60)
     if subjCd == 1:
-        touch_template(aram_korean_tpl)
+        _touch_required(aram_korean_tpl, threshold=0.60)
     elif subjCd == 2:
-        touch_template(aram_math_tpl)
+        _touch_required(aram_math_tpl, threshold=0.60)
     elif subjCd == 3:
-        touch_template(aram_science_tpl)
+        _touch_required(aram_science_tpl, threshold=0.60)
     sleep(5)
 
     # 커리큘럼 정보 가져오기
@@ -86,23 +110,18 @@ def check_wittimew(width, height, title_name):
     center_x, center_y = width // 2, height // 2
 
     #광장에서 스쿨 진입
-    touch_template(menu_tpl)
-    wait(school_tpl, timeout=60)
-    touch_template(school_tpl)
+    _touch_required(menu_tpl, threshold=0.62)
+    _touch_required(school_tpl, threshold=0.60)
     sleep(2)
-    touch((center_x, center_y))
+    _tap_center_until(enter_tpl, center_x, center_y, attempts=4, wait_sec=1.0)
 
     # 스쿨 진입 후 아람북월드 진입
-    wait(enter_tpl, timeout=60)
     sleep(1)
-    touch_template(enter_tpl)
-    wait(play_tpl, timeout=60)
+    _touch_required(enter_tpl, threshold=0.60)
     sleep(1)
-    touch_template(play_tpl)
-    wait(mew_tpl, timeout=60)
+    _touch_required(play_tpl, threshold=0.60)
     sleep(1)
-    touch_template(mew_tpl)
-    wait(mew_next, timeout=60)
+    _touch_required(mew_tpl, threshold=0.60)
     sleep(3)
 
     # 곡 메뉴 이동
@@ -115,6 +134,7 @@ def check_wittimew(width, height, title_name):
 
     # 컨텐츠 검증 시작 (Song ~ Pigment)
     for i in range(12):
+        started_at = pytime.perf_counter()
         img_path = fr"button_images\witti_world\mew_buttons\{i+1}.png"
         touch_template(Template(img_path))
         try:
@@ -173,7 +193,8 @@ def check_wittimew(width, height, title_name):
             wb,
             ws,
             capture_path,
-            thumb_path
+            thumb_path,
+            duration_sec=round(pytime.perf_counter() - started_at, 2),
         )
 
         # 컨텐츠 확인 후 닫기 동작

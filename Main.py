@@ -24,6 +24,7 @@ from request_API import (
     class_list,
     student_list_by_class,
     authenticate_study_access,
+    authenticate_study_access_detailed,
     get_study_access_auth,
 )
 
@@ -110,6 +111,7 @@ def worker_main(
     log_queue,
     btn_name,
     device_name,
+    device_label,
     inputId,
     inputPwd,
     subjCd,
@@ -117,6 +119,8 @@ def worker_main(
     curtnSeq,
     title_name,
     server,
+    study_access_mem_nm,
+    study_access_mem_id,
     study_access_auth_token,
 ):
     import builtins, traceback
@@ -130,6 +134,7 @@ def worker_main(
         AutoTest_Start(
             btn_name,
             device_name,
+            device_label,
             inputId,
             inputPwd,
             subjCd,
@@ -137,13 +142,93 @@ def worker_main(
             curtnSeq,
             title_name,
             server,
+            study_access_mem_nm,
+            study_access_mem_id,
             study_access_auth_token,
         )
     except Exception as e:
         print(f"[ERROR] AutoTest_Start 중 예외: {e!r}")
         print(traceback.format_exc())
 
-def worker_complete_missions(log_queue, user_id, user_pwd, server):
+# def worker_complete_missions(log_queue, user_id, user_pwd, server):
+#     match server:
+#         case "Prod":
+#             server = "api"
+#         case "QA":
+#             server = "qa-api"
+#         case "Dev":
+#             server = "dev-api"
+#         case _:
+#             server = "api"
+# 
+#     import builtins, traceback
+#     def _print_via_queue(*args, sep=" ", end="\n", **kwargs):
+#         msg = sep.join(str(a) for a in args) + end
+#         log_queue.put(msg.rstrip("\n"))
+#     builtins.print = _print_via_queue
+# 
+#     try:
+#         print("오늘의 미션 완료 처리를 시작합니다...")
+# 
+#         authToken = login_step1(user_id, user_pwd, server)
+#         if not authToken:
+#             print("[ERROR] 1차 로그인 실패. ID/PW나 서버 설정을 확인하세요.")
+#             return
+#         print("[INFO] login_step1 ??? childList? ?? ??? ?? ??? ??? ? ????.")
+#         return
+# 
+#         auth_tokens_by_child = login_step2_for_all_children(authToken, childIds, server)
+#         if not auth_tokens_by_child:
+#             print("[ERROR] 2차 로그인 실패: 모든 자녀의 토큰을 발급받지 못했습니다.")
+#             return
+# 
+#         all_child_missions = []
+# 
+#         for child_id, child_name in zip(childIds, childNms):
+#             child_specific_auth_token = auth_tokens_by_child.get(child_id)
+#             if not child_specific_auth_token:
+#                 print(f"[WARN] '{child_name}'({child_id})의 2차 로그인 토큰을 찾을 수 없습니다. 이 자녀의 미션을 건너뜁니다.")
+#                 continue
+#             
+#             response = get_curriculum_response(child_specific_auth_token, child_id, server)
+# 
+#             if response is None:
+#                 print(f"[WARN] '{child_name}'의 커리큘럼 조회 실패. 다음 자녀로 넘어갑니다.")
+#                 continue
+# 
+#             try:
+#                 data = response.json()
+#                 mission_list = data.get("result", {}).get("missionList", [])
+# 
+#                 if not mission_list:
+#                     print(f"[INFO] '{child_name}'에게 할당된 오늘의 미션이 없습니다.")
+#                     continue
+# 
+#                 for mission in mission_list:
+#                     mission['childNm'] = child_name
+#                     mission['childId'] = child_id
+#                     all_child_missions.append(mission)
+# 
+#             except Exception as e:
+#                 print(f"[ERROR] '{child_name}'의 커리큘럼 응답 파싱 중 오류 발생: {e}")
+#                 continue
+# 
+#         complete_today_missions(auth_tokens_by_child, all_child_missions, server)
+# 
+#         print("\n오늘의 미션 완료 처리가 성공적으로 종료되었습니다.")
+# 
+#     except Exception as e:
+#         print(f"[ERROR] 미션 완료 처리 중 예외 발생: {e!r}")
+#         print(traceback.format_exc())
+# 
+# 
+def worker_study_access_bulk(log_queue, user_id, user_pwd, server, device_label):
+    env_code = {
+        "Prod": "PRD",
+        "QA": "QA",
+        "Dev": "DEV",
+    }.get(server, str(server).upper())
+
     match server:
         case "Prod":
             server = "api"
@@ -151,76 +236,192 @@ def worker_complete_missions(log_queue, user_id, user_pwd, server):
             server = "qa-api"
         case "Dev":
             server = "dev-api"
-        case "Total-Test":
-            server = "total-test-api"
+        case _:
+            server = "api"
 
-    import builtins, traceback
+    import builtins
+    import traceback
+    from datetime import datetime
+    from openpyxl import Workbook, load_workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+
     def _print_via_queue(*args, sep=" ", end="\n", **kwargs):
         msg = sep.join(str(a) for a in args) + end
         log_queue.put(msg.rstrip("\n"))
+
     builtins.print = _print_via_queue
 
     try:
-        print("오늘의 미션 완료 처리를 시작합니다...")
-
-        refreshToken, childIds, childNms = login_step1(user_id, user_pwd, server)
-        if not refreshToken:
-            print("[ERROR] 1차 로그인 실패. ID/PW나 서버 설정을 확인하세요.")
+        print("[INFO] study/access bulk test started")
+        token = login_step1(user_id, user_pwd, server)
+        if not token:
+            print("[ERROR] login failed. cannot load classes.")
             return
 
-        if not childIds:
-            print("[INFO] 학습을 진행할 자녀 정보가 없습니다.")
+        class_resp = class_list(token, user_id, server)
+        if class_resp is None:
+            print("[ERROR] class list request failed.")
             return
 
-        auth_tokens_by_child = login_step2_for_all_children(refreshToken, childIds, server)
-        if not auth_tokens_by_child:
-            print("[ERROR] 2차 로그인 실패: 모든 자녀의 토큰을 발급받지 못했습니다.")
-            return
+        class_data = class_resp.json()
+        classes = class_data.get("result", {}).get("classList", [])
+        print(f"[INFO] classes loaded: {len(classes)}")
 
-        all_child_missions = []
+        report_dir = os.path.join(os.getcwd(), "test_report")
+        os.makedirs(report_dir, exist_ok=True)
+        report_path = os.path.join(report_dir, "study_access_result.xlsx")
 
-        for child_id, child_name in zip(childIds, childNms):
-            child_specific_auth_token = auth_tokens_by_child.get(child_id)
-            if not child_specific_auth_token:
-                print(f"[WARN] '{child_name}'({child_id})의 2차 로그인 토큰을 찾을 수 없습니다. 이 자녀의 미션을 건너뜁니다.")
-                continue
-            
-            response = get_curriculum_response(child_specific_auth_token, child_id, server)
+        safe_user_id = re.sub(r'[\\/:*?"<>|]', "_", str(user_id))
+        sheet_name = safe_user_id[:31]  # Excel sheet name max 31 chars
 
-            if response is None:
-                print(f"[WARN] '{child_name}'의 커리큘럼 조회 실패. 다음 자녀로 넘어갑니다.")
-                continue
-
+        if os.path.exists(report_path):
             try:
-                data = response.json()
-                mission_list = data.get("result", {}).get("missionList", [])
+                wb = load_workbook(report_path)
+            except Exception:
+                wb = Workbook()
+        else:
+            wb = Workbook()
 
-                if not mission_list:
-                    print(f"[INFO] '{child_name}'에게 할당된 오늘의 미션이 없습니다.")
-                    continue
+        headers = [
+            "tested_at",
+            "server_api",
+            "classId",
+            "classNm",
+            "targetAge",
+            "studentId",
+            "studentNm",
+            "loginIdUsed",
+            "httpStatus",
+            "status",
+            "memNm",
+            "memId",
+            "error",
+        ]
 
-                for mission in mission_list:
-                    mission['childNm'] = child_name
-                    mission['childId'] = child_id
-                    all_child_missions.append(mission)
+        if sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+        else:
+            ws = wb.create_sheet(title=sheet_name)
+            ws.append(headers)
+            for c in ws[1]:
+                c.font = Font(bold=True)
+                c.alignment = Alignment(horizontal="center", vertical="center")
 
-            except Exception as e:
-                print(f"[ERROR] '{child_name}'의 커리큘럼 응답 파싱 중 오류 발생: {e}")
+        # Remove default "Sheet" if it exists and is empty
+        if "Sheet" in wb.sheetnames:
+            default_ws = wb["Sheet"]
+            if default_ws.max_row <= 1 and default_ws.cell(1, 1).value is None:
+                wb.remove(default_ws)
+
+        status_col_idx = headers.index("status") + 1
+        student_nm_col_idx = headers.index("studentNm") + 1
+        mem_nm_col_idx = headers.index("memNm") + 1
+
+        total_students = 0
+        success_count = 0
+        fail_count = 0
+
+        for cls in classes:
+            class_id = str(cls.get("classId", "")).strip()
+            class_nm = str(cls.get("classNm", "")).strip()
+            target_age = str(cls.get("targetAge", "")).strip()
+            if not class_id:
                 continue
 
-        complete_today_missions(auth_tokens_by_child, all_child_missions, server)
+            student_resp = student_list_by_class(token, class_id, server)
+            if student_resp is None:
+                print(f"[WARN] student list failed for classId={class_id}")
+                continue
 
-        print("\n오늘의 미션 완료 처리가 성공적으로 종료되었습니다.")
+            students = student_resp.json().get("result", {}).get("studentList", [])
+            print(f"[INFO] class={class_nm} ({class_id}), students={len(students)}")
+
+            for student in students:
+                total_students += 1
+                tested_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                student_id = str(student.get("studentId", "")).strip()
+                student_nm = str(student.get("studentNm", "")).strip()
+                login_id_used = str(
+                    student.get("loginId")
+                    or student.get("studentLoginId")
+                    or user_id
+                ).strip()
+
+                result = authenticate_study_access_detailed(student_id, login_id_used, server)
+                data = result.get("data") if isinstance(result, dict) else None
+                if not isinstance(data, dict):
+                    data = {}
+                api_result = data.get("result", {}) if isinstance(data.get("result", {}), dict) else {}
+
+                ok = bool(result.get("ok"))
+                if ok:
+                    success_count += 1
+                else:
+                    fail_count += 1
+
+                mem_nm = str(api_result.get("memNm", "")).strip()
+
+                ws.append([
+                    tested_at,
+                    env_code,
+                    class_id,
+                    class_nm,
+                    target_age,
+                    student_id,
+                    student_nm,
+                    login_id_used,
+                    result.get("status_code"),
+                    "PASS" if ok else "FAIL",
+                    mem_nm,
+                    api_result.get("memId", ""),
+                    result.get("error", ""),
+                ])
+                current_row = ws.max_row
+                for col_idx in range(1, len(headers) + 1):
+                    ws.cell(row=current_row, column=col_idx).alignment = Alignment(horizontal="center", vertical="center")
+                status_cell = ws.cell(row=current_row, column=status_col_idx)
+                if ok:
+                    status_cell.font = Font(color="008000", bold=True)
+                    status_cell.fill = PatternFill(fill_type="solid", start_color="CCFFCC", end_color="CCFFCC")
+                else:
+                    status_cell.font = Font(color="FF0000", bold=True)
+                    status_cell.fill = PatternFill(fill_type="solid", start_color="FFCCCC", end_color="FFCCCC")
+
+                if student_nm != mem_nm:
+                    mismatch_fill = PatternFill(fill_type="solid", start_color="FFCCCC", end_color="FFCCCC")
+                    mismatch_font = Font(color="FF0000", bold=True)
+                    ws.cell(row=current_row, column=student_nm_col_idx).font = mismatch_font
+                    ws.cell(row=current_row, column=student_nm_col_idx).fill = mismatch_fill
+                    ws.cell(row=current_row, column=mem_nm_col_idx).font = mismatch_font
+                    ws.cell(row=current_row, column=mem_nm_col_idx).fill = mismatch_fill
+
+        for col in ws.columns:
+            col_letter = col[0].column_letter
+            max_len = 0
+            for cell in col:
+                if cell.value is None:
+                    continue
+                max_len = max(max_len, len(str(cell.value)))
+            ws.column_dimensions[col_letter].width = min(60, max(12, max_len + 2))
+
+        wb.save(report_path)
+
+        print(
+            f"[INFO] study/access bulk completed. total={total_students}, "
+            f"success={success_count}, fail={fail_count}"
+        )
+        print(f"[INFO] report saved: {report_path}")
 
     except Exception as e:
-        print(f"[ERROR] 미션 완료 처리 중 예외 발생: {e!r}")
+        print(f"[ERROR] study/access bulk exception: {e!r}")
         print(traceback.format_exc())
 
 
 if getattr(sys, "frozen", False):
     import __main__
     __main__.worker_main = worker_main
-    __main__.worker_complete_missions = worker_complete_missions
+#     __main__.worker_complete_missions = worker_complete_missions
+    __main__.worker_study_access_bulk = worker_study_access_bulk
     print("Registered workers on __main__")
 
 
@@ -264,6 +465,7 @@ class MainApp(QtWidgets.QMainWindow):
         self.class_list_data = []
         self.class_auth_token = None
         self.class_api_server = None
+        self.study_access_mem_nm = None
         self.study_access_mem_id = None
         self.study_access_auth_token = None
         self.class_list_model = QtGui.QStandardItemModel(self)
@@ -271,10 +473,11 @@ class MainApp(QtWidgets.QMainWindow):
         self.ui.listView.setModel(self.class_list_model)
         self.ui.listView_2.setModel(self.student_list_model)
 
-        self.ui.comboBox.setItemData(1, 1, QtCore.Qt.UserRole)
-        self.ui.comboBox.setItemData(2, 2, QtCore.Qt.UserRole)
-        self.ui.comboBox.setItemData(3, 3, QtCore.Qt.UserRole)
-        self.ui.lineEdit.setText("MGsales001")
+        self.ui.comboBox.setItemData(1, 0, QtCore.Qt.UserRole)   # ALL
+        self.ui.comboBox.setItemData(2, 1, QtCore.Qt.UserRole)   # 한글
+        self.ui.comboBox.setItemData(3, 2, QtCore.Qt.UserRole)   # 수학
+        self.ui.comboBox.setItemData(4, 3, QtCore.Qt.UserRole)   # 창의
+        self.ui.lineEdit.setText("MGtest000")
         self.ui.lineEdit_2.setText("mini1122@@")
 
         self.ui.pushButton.clicked.connect(self.close)
@@ -286,9 +489,10 @@ class MainApp(QtWidgets.QMainWindow):
         self.ui.pushButton_7.clicked.connect(self.on_start)
         self.ui.pushButton_8.clicked.connect(self.clear_log)
         self.ui.pushButton_10.clicked.connect(self.on_load_class_list)
+        self.ui.pushButton_11.clicked.connect(self.on_run_study_access_bulk)
         self.ui.listView.clicked.connect(self.on_class_item_clicked)
         self.ui.listView_2.clicked.connect(self.on_student_item_clicked)
-        self.ui.pushButton_9.clicked.connect(self.on_complete_missions)
+#         self.ui.pushButton_9.clicked.connect(self.on_complete_missions)
 
     def open_report_folder(self):
         project_dir = os.path.abspath(os.getcwd())
@@ -317,9 +521,8 @@ class MainApp(QtWidgets.QMainWindow):
             "Prod": "api",
             "QA": "qa-api",
             "Dev": "dev-api",
-            "Total-Test": "total-test-api",
         }
-        return mapping.get(server_name, server_name)
+        return mapping.get(server_name, "api")
 
     def on_load_class_list(self):
         input_id = self.ui.lineEdit.text().strip()
@@ -331,7 +534,7 @@ class MainApp(QtWidgets.QMainWindow):
             self.logger.error("Class List 조회를 위해 ID/PW를 입력해주세요.")
             return
 
-        auth_token, _, _ = login_step1(input_id, input_pwd, api_server)
+        auth_token = login_step1(input_id, input_pwd, api_server)
         if not auth_token:
             self.logger.error("Class List 조회 실패: 로그인(authToken 발급) 실패")
             return
@@ -359,8 +562,35 @@ class MainApp(QtWidgets.QMainWindow):
                 self.class_list_model.appendRow(item)
 
             self.logger.info(f"Class List {len(classes)}건 로드 완료")
+            self._auto_select_first_class_and_student()
         except Exception as e:
             self.logger.error(f"Class List 파싱 실패: {e!r}")
+
+    def _auto_select_first_class_and_student(self):
+        if self.class_list_model.rowCount() <= 0:
+            self.logger.warning("Auto select skipped: class list is empty.")
+            return
+
+        first_class_index = self.class_list_model.index(0, 0)
+        if not first_class_index.isValid():
+            self.logger.warning("Auto select skipped: invalid first class index.")
+            return
+
+        self.ui.listView.setCurrentIndex(first_class_index)
+        self.on_class_item_clicked(first_class_index)
+
+        if self.student_list_model.rowCount() <= 0:
+            self.logger.warning("Auto select skipped: student list is empty.")
+            return
+
+        first_student_index = self.student_list_model.index(0, 0)
+        if not first_student_index.isValid():
+            self.logger.warning("Auto select skipped: invalid first student index.")
+            return
+
+        self.ui.listView_2.setCurrentIndex(first_student_index)
+        self.on_student_item_clicked(first_student_index)
+        self.logger.info("Auto-selected first class and first student.")
 
     def on_class_item_clicked(self, index):
         class_id = index.data(QtCore.Qt.UserRole)
@@ -423,7 +653,8 @@ class MainApp(QtWidgets.QMainWindow):
             )
             return
 
-        _, mem_id, auth_token = get_study_access_auth()
+        mem_nm, mem_id, auth_token = get_study_access_auth()
+        self.study_access_mem_nm = mem_nm
         self.study_access_mem_id = mem_id
         self.study_access_auth_token = auth_token
         token_masked = f"{auth_token[:12]}..." if auth_token else "None"
@@ -487,6 +718,7 @@ class MainApp(QtWidgets.QMainWindow):
             return
 
         device_name = self.ui.comboBox_4.currentData()
+        device_label = self.ui.comboBox_4.currentText()
         inputId     = self.ui.lineEdit.text().strip()
         inputPwd    = self.ui.lineEdit_2.text().strip()
         subjCd      = self.ui.comboBox.currentData()
@@ -514,6 +746,7 @@ class MainApp(QtWidgets.QMainWindow):
             self.log_queue,
             btn_name,
             device_name,
+            device_label,
             inputId,
             inputPwd,
             subjCd,
@@ -521,6 +754,8 @@ class MainApp(QtWidgets.QMainWindow):
             curtnSeq,
             title_name,
             server,
+            self.study_access_mem_nm,
+            self.study_access_mem_id,
             self.study_access_auth_token,
         )
         self.worker_process = Process(target=worker_main, args=args)
@@ -532,7 +767,35 @@ class MainApp(QtWidgets.QMainWindow):
             self._drain_timer.timeout.connect(self._drain_logs)
         self._drain_timer.start(100)
 
-    def on_complete_missions(self):
+#     def on_complete_missions(self):
+#         if self.worker_process and self.worker_process.is_alive():
+#             self.logger.warning("작업이 이미 실행 중입니다.")
+#             return
+# 
+#         user_id = self.ui.lineEdit.text().strip()
+#         user_pwd = self.ui.lineEdit_2.text().strip()
+#         server = self.ui.comboBox_6.currentText()
+# 
+#         if not all([user_id, user_pwd, server]):
+#             msg_box = QMessageBox()
+#             msg_box.setIcon(QMessageBox.Warning)
+#             msg_box.setText("ID, PW, 서버를 모두 입력해주세요.")
+#             msg_box.setWindowTitle("입력 오류")
+#             msg_box.exec_()
+#             return
+# 
+#         self.log_queue = Queue()
+#         args = (self.log_queue, user_id, user_pwd, server)
+#         self.worker_process = Process(target=worker_complete_missions, args=args)
+#         self.worker_process.start()
+#         self.logger.info(f"미션 완료 프로세스 시작 (PID={self.worker_process.pid})")
+# 
+#         if self._drain_timer is None:
+#             self._drain_timer = QtCore.QTimer(self)
+#             self._drain_timer.timeout.connect(self._drain_logs)
+#         self._drain_timer.start(100)
+# 
+    def on_run_study_access_bulk(self):
         if self.worker_process and self.worker_process.is_alive():
             self.logger.warning("작업이 이미 실행 중입니다.")
             return
@@ -550,10 +813,11 @@ class MainApp(QtWidgets.QMainWindow):
             return
 
         self.log_queue = Queue()
-        args = (self.log_queue, user_id, user_pwd, server)
-        self.worker_process = Process(target=worker_complete_missions, args=args)
+        device_label = self.ui.comboBox_4.currentText()
+        args = (self.log_queue, user_id, user_pwd, server, device_label)
+        self.worker_process = Process(target=worker_study_access_bulk, args=args)
         self.worker_process.start()
-        self.logger.info(f"미션 완료 프로세스 시작 (PID={self.worker_process.pid})")
+        self.logger.info(f"study/access bulk 프로세스 시작 (PID={self.worker_process.pid})")
 
         if self._drain_timer is None:
             self._drain_timer = QtCore.QTimer(self)
