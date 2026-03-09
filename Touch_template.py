@@ -1,6 +1,9 @@
 from airtest.core.api import *
 from airtest.core.settings import Settings as ST
 import time
+import os
+import cv2
+import numpy as np
 from airtest.core.cv import Template as AirtestTemplate
 
 def touch_template(template,
@@ -100,12 +103,86 @@ def touch_template(template,
 
         x1, y1, x2, y2 = roi  # 좌표 언패킹
 
+    def _load_tpl_bgr(t):
+        path = getattr(t, "filename", None) or getattr(t, "filepath", None)
+        if not path or not os.path.isfile(path):
+            return None
+        # Use imdecode for Windows path safety
+        data = np.fromfile(path, dtype=np.uint8)
+        if data.size == 0:
+            return None
+        return cv2.imdecode(data, cv2.IMREAD_COLOR)
+
+    def _find_in_roi(t, rx1, ry1, rx2, ry2):
+        src = device().snapshot()
+        tpl_img = _load_tpl_bgr(t)
+        if src is None or tpl_img is None:
+            return None
+
+        h, w = src.shape[:2]
+        rx1 = max(0, min(rx1, w - 1))
+        rx2 = max(0, min(rx2, w - 1))
+        ry1 = max(0, min(ry1, h - 1))
+        ry2 = max(0, min(ry2, h - 1))
+        if rx2 <= rx1 or ry2 <= ry1:
+            return None
+
+        crop = src[ry1:ry2 + 1, rx1:rx2 + 1]
+        if crop.size == 0:
+            return None
+
+        thr = threshold if threshold is not None else getattr(t, "threshold", 0.7)
+        best = None
+        step = max(scale_step, 0.05)
+        s = scale_min
+        while s <= scale_max + 1e-9:
+            tpl = tpl_img if abs(s - 1.0) < 1e-9 else cv2.resize(
+                tpl_img,
+                (max(1, int(tpl_img.shape[1] * s)), max(1, int(tpl_img.shape[0] * s))),
+                interpolation=cv2.INTER_CUBIC,
+            )
+            th, tw = tpl.shape[:2]
+            ch, cw = crop.shape[:2]
+            if th <= ch and tw <= cw:
+                res = cv2.matchTemplate(crop, tpl, cv2.TM_CCOEFF_NORMED)
+                _, max_val, _, max_loc = cv2.minMaxLoc(res)
+                if best is None or max_val > best[2]:
+                    cx = rx1 + max_loc[0] + (tw / 2.0)
+                    cy = ry1 + max_loc[1] + (th / 2.0)
+                    best = (cx, cy, float(max_val))
+            s += step
+
+        if best and best[2] >= float(thr):
+            return best
+        return None
+
     try:
         for attempt in range(1, max_retries + 1):
-            pos = exists(tpl)
-            if pos:
-                x, y = pos
-                if not use_roi or (x1 <= x <= x2 and y1 <= y <= y2):
+            if use_roi:
+                pos = _find_in_roi(tpl, x1, y1, x2, y2)
+                if pos:
+                    x, y, score = pos
+                    print(f"[TOUCH] {tpl} at ({x:.0f},{y:.0f}) score={score:.3f} attempt={attempt}/{max_retries}")
+                    touch((int(x), int(y)))
+                    if after_touch_sleep > 0:
+                        time.sleep(after_touch_sleep)
+                    return True
+            else:
+                # Prefer CV matching path for consistency with ROI mode.
+                w, h = G.DEVICE.get_current_resolution()
+                pos_cv = _find_in_roi(tpl, 0, 0, w - 1, h - 1)
+                if pos_cv:
+                    x, y, score = pos_cv
+                    print(f"[TOUCH] {tpl} at ({x:.0f},{y:.0f}) score={score:.3f} attempt={attempt}/{max_retries}")
+                    touch((int(x), int(y)))
+                    if after_touch_sleep > 0:
+                        time.sleep(after_touch_sleep)
+                    return True
+
+                # Fallback to Airtest exists() once per attempt.
+                pos = exists(tpl)
+                if pos:
+                    x, y = pos
                     print(f"[TOUCH] {tpl} at ({x:.0f},{y:.0f}) attempt={attempt}/{max_retries}")
                     touch((int(x), int(y)))
                     if after_touch_sleep > 0:
