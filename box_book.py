@@ -6,7 +6,7 @@ from airtest.core.api import sleep, wait
 from Touch_template import touch_template
 from box_ACT import capture_screen
 from check_video import is_video_playing
-from create_report import create_report, input_excel
+from create_report import create_report, input_excel, report_thumbnail_error
 from utils import Template, output_path
 
 BASE_RESOLUTION = (1920, 1200)
@@ -16,23 +16,6 @@ after_tpl_1 = Template(r"button_images\book_exit.png", threshold=0.6, resolution
 after_tpl_1_1 = Template(r"button_images\book_exit_t.png", threshold=0.6, resolution=BASE_RESOLUTION)
 after_tpl_2 = Template(r"button_images\exit_y.png", threshold=0.85, resolution=BASE_RESOLUTION)
 
-
-def _report_thumbnail_error(img_path, child_nm, image_folder_abs, message, started_at):
-    capture_path, base = capture_screen(img_path, child_nm)
-    file_path, wb, ws = create_report()
-    thumb_path = os.path.join(image_folder_abs, os.path.basename(img_path))
-    input_excel(
-        "ERROR",
-        child_nm,
-        base,
-        file_path,
-        wb,
-        ws,
-        capture_path,
-        thumb_path,
-        error_message=message,
-        duration_sec=round(pytime.perf_counter() - started_at, 2),
-    )
 
 
 def touch_booklist_images(
@@ -62,7 +45,7 @@ def touch_booklist_images(
             print(f"화면에서 {img_file} 이미지 터치 시도")
             touched = touch_template(Template(img_path))
             if not touched:
-                _report_thumbnail_error(
+                report_thumbnail_error(
                     img_path,
                     childNm,
                     image_folder_abs,

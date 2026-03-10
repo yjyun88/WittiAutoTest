@@ -1,4 +1,5 @@
 import os
+import time as pytime
 import traceback
 from datetime import datetime
 from io import BytesIO
@@ -252,7 +253,7 @@ def _write_summary_sheet(wb, ws):
         wb._sheets.remove(summary_ws)
         wb._sheets.insert(0, summary_ws)
 
-    summary_header = ["date_sheet", "total", "pass", "fail", "skip", "error", "retry", "other", "pass_rate", "duration_total"]
+    summary_header = ["date", "total", "pass", "fail", "skip", "error", "retry", "other", "pass_rate", "duration_total"]
     summary_ws.append(summary_header)
     for cell in summary_ws[1]:
         cell.font = Font(bold=True)
@@ -349,13 +350,21 @@ def _write_summary_sheet(wb, ws):
         for col in range(1, summary_ws.max_column + 1):
             summary_ws.cell(row=row, column=col).alignment = Alignment(horizontal="center", vertical="center")
 
-    for col in range(1, summary_ws.max_column + 1):
-        max_len = 0
-        for row in range(1, summary_ws.max_row + 1):
-            value = summary_ws.cell(row=row, column=col).value
-            if value is not None:
-                max_len = max(max_len, len(str(value)))
-        summary_ws.column_dimensions[get_column_letter(col)].width = min(40, max(10, (max_len + 2) * 1.2))
+    # Column widths based on displayed content (not formula length)
+    col_widths = {
+        "date": 16,
+        "total": 8,
+        "pass": 8,
+        "fail": 8,
+        "skip": 8,
+        "error": 8,
+        "retry": 8,
+        "other": 8,
+        "pass_rate": 12,
+        "duration_total": 22,
+    }
+    for col_idx, header_name in enumerate(summary_header, start=1):
+        summary_ws.column_dimensions[get_column_letter(col_idx)].width = col_widths.get(header_name, 12)
 
 
 def _flush_report(file_path):
@@ -582,3 +591,22 @@ def input_excel(
         traceback.print_exc()
         print(f"[WARN] input_excel continue on error: {e}")
         return False
+
+
+def report_thumbnail_error(img_path, child_nm, image_folder_abs, message, started_at):
+    from box_ACT import capture_screen
+    capture_path, base = capture_screen(img_path, child_nm)
+    file_path, wb, ws = create_report()
+    thumb_path = os.path.join(image_folder_abs, os.path.basename(img_path))
+    input_excel(
+        "ERROR",
+        child_nm,
+        base,
+        file_path,
+        wb,
+        ws,
+        capture_path,
+        thumb_path,
+        error_message=message,
+        duration_sec=round(pytime.perf_counter() - started_at, 2),
+    )

@@ -13,14 +13,14 @@ os.makedirs(DEBUG_DIR, exist_ok=True)
 # Default class list area (relative to screen): x1, y1, x2, y2
 DEFAULT_ROI_REL = (0.2917, 0.3833, 0.5000, 0.7583)
 CLASS_TEXT_ALIAS = {
-    "\ud154": "\ubca8",
-    "\ub378": "\ubca8",
-    "\ubc8c": "\ubca8",
-    "\ud0e4": "\ubca8",
-    "\ud50c": "\ud074",
+    "텔": "벨",
+    "델": "벨",
+    "벌": "벨",
+    "캘": "벨",
+    "플": "클",
 }
-CLASS_PREFIX = "\ub808\ubca8"
-SPRING_CLASS = "\ub298\ubd04"
+CLASS_PREFIX = "레벨"
+SPRING_CLASS = "늘봄"
 FULL_SCREEN_ROI = "full"
 DEFAULT_ROI = "default"
 
@@ -37,7 +37,7 @@ def _get_reader():
 
 
 def _normalize_text(value):
-    return re.sub(r"[^0-9A-Za-z\uac00-\ud7a3]", "", str(value or "")).lower()
+    return re.sub(r"[^0-9A-Za-z가-힣]", "", str(value or "")).lower()
 
 
 def _normalize_class_text(value):
@@ -46,7 +46,7 @@ def _normalize_class_text(value):
     for wrong, correct in CLASS_TEXT_ALIAS.items():
         text = text.replace(wrong, correct)
     text = _normalize_text(text)
-    if re.match(r"^\ub808[^0-9]*\d+$", text):
+    if re.match(r"^레[^0-9]*\d+$", text):
         digit = re.search(r"\d+", text)
         text = f"{CLASS_PREFIX}{digit.group(0)}"
     return text

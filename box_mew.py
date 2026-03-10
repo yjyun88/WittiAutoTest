@@ -1,19 +1,20 @@
 ﻿import os
-import re
-import sys
 import time as pytime
 from difflib import SequenceMatcher
 
 import cv2
-import easyocr
 import numpy as np
 from airtest.core.api import device, exists, sleep, swipe, touch
 
 from Touch_template import touch_template
 from box_ACT import capture_screen
 from check_video import is_video_playing
-from create_report import create_report, input_excel
-from utils import Template, output_path
+from create_report import create_report, input_excel, report_thumbnail_error
+from utils import (
+    Template, output_path,
+    get_ocr_reader, norm_text, load_bgr, resolve_roi_abs,
+    extract_text_hint, roi_change_score,
+)
 
 BASE_RESOLUTION = (1920, 1200)
 
@@ -34,8 +35,6 @@ MEW_OCR_PASS_SCORE = 0.68
 MEW_CANDIDATE_LIMIT = 8
 MAX_SWIPE_ATTEMPTS = 8
 
-_READER = None
-
 before_tpl = Template(r"button_images\mew_cate.png", resolution=BASE_RESOLUTION)
 after_tpl = [
     Template(r"button_images\mew_down_9.png", threshold=0.8, resolution=BASE_RESOLUTION),
@@ -44,32 +43,6 @@ after_tpl = [
 play_tpl = Template(r"button_images\play.png", resolution=BASE_RESOLUTION)
 
 
-def _report_thumbnail_error(img_path, child_nm, image_folder_abs, message, started_at):
-    capture_path, base = capture_screen(img_path, child_nm)
-    file_path, wb, ws = create_report()
-    thumb_path = os.path.join(image_folder_abs, os.path.basename(img_path))
-    input_excel(
-        "ERROR",
-        child_nm,
-        base,
-        file_path,
-        wb,
-        ws,
-        capture_path,
-        thumb_path,
-        error_message=message,
-        duration_sec=round(pytime.perf_counter() - started_at, 2),
-    )
-
-
-def _load_bgr(path):
-    if not os.path.isfile(path):
-        return None
-    data = np.fromfile(path, dtype=np.uint8)
-    if data.size == 0:
-        return None
-    return cv2.imdecode(data, cv2.IMREAD_COLOR)
-
 
 def _filename_hint_text(path):
     stem = os.path.splitext(os.path.basename(path or ""))[0]
@@ -77,29 +50,6 @@ def _filename_hint_text(path):
         return ""
     return stem.split("--", 1)[1].replace("_", " ").strip()
 
-
-def _get_reader():
-    global _READER
-    if _READER is not None:
-        return _READER
-    try:
-        _READER = easyocr.Reader(["ko", "en"], gpu=True)
-    except Exception:
-        _READER = easyocr.Reader(["ko", "en"], gpu=False)
-    return _READER
-
-
-def _norm(value):
-    return re.sub(r"[^0-9A-Za-z가-힣]", "", str(value or "")).lower()
-
-
-def _resolve_roi_abs(img_w, img_h):
-    x1r, y1r, x2r, y2r = LIST_ROI_REL
-    x1 = max(0, int(img_w * x1r))
-    y1 = max(0, int(img_h * y1r))
-    x2 = min(img_w - 1, int(img_w * x2r))
-    y2 = min(img_h - 1, int(img_h * y2r))
-    return x1, y1, x2, y2
 
 
 def _match_candidates_in_roi(src_bgr, tpl_bgr, roi_abs, scale_min=0.7, scale_max=1.4, scale_step=0.05):
@@ -207,25 +157,8 @@ def _tag_score(src_bgr, tpl_bgr, rect):
     return (gray_score * 0.65) + (edge_score * 0.35)
 
 
-def _extract_text_hint(tpl_bgr):
-    try:
-        results = _get_reader().readtext(tpl_bgr, detail=1)
-    except Exception:
-        return ""
-    best_text = ""
-    best_prob = -1.0
-    for _bbox, text, prob in results:
-        norm_text = _norm(text)
-        if len(norm_text) < 2:
-            continue
-        if float(prob) > best_prob:
-            best_prob = float(prob)
-            best_text = text
-    return best_text
-
-
 def _ocr_similarity(src_bgr, rect, text_hint):
-    hint = _norm(text_hint)
+    hint = norm_text(text_hint)
     if not hint:
         return 1.0
 
@@ -241,46 +174,34 @@ def _ocr_similarity(src_bgr, rect, text_hint):
         return 0.0
 
     try:
-        results = _get_reader().readtext(patch, detail=1)
+        results = get_ocr_reader().readtext(patch, detail=1)
     except Exception:
         return 0.0
 
     best_sim = 0.0
     for _bbox, text, _prob in results:
-        norm_text = _norm(text)
-        if not norm_text:
+        nt = norm_text(text)
+        if not nt:
             continue
-        sim = SequenceMatcher(None, norm_text, hint).ratio()
+        sim = SequenceMatcher(None, nt, hint).ratio()
         if sim > best_sim:
             best_sim = sim
     return best_sim
 
 
-def _roi_change_score(prev_bgr, curr_bgr):
-    if prev_bgr is None or curr_bgr is None:
-        return 100.0
-    h = min(prev_bgr.shape[0], curr_bgr.shape[0])
-    w = min(prev_bgr.shape[1], curr_bgr.shape[1])
-    if h <= 0 or w <= 0:
-        return 100.0
-    a = cv2.cvtColor(prev_bgr[:h, :w], cv2.COLOR_BGR2GRAY)
-    b = cv2.cvtColor(curr_bgr[:h, :w], cv2.COLOR_BGR2GRAY)
-    return float(np.mean(cv2.absdiff(a, b)))
-
-
 def _find_and_touch_mew_item(template_path):
     src = device().snapshot()
-    tpl = _load_bgr(template_path)
+    tpl = load_bgr(template_path)
     if src is None or tpl is None:
         return False
 
     h, w = src.shape[:2]
-    roi_abs = _resolve_roi_abs(w, h)
+    roi_abs = resolve_roi_abs(w, h, LIST_ROI_REL)
     candidates = _match_candidates_in_roi(src, tpl, roi_abs)
     if not candidates:
         return False
 
-    text_hint = _filename_hint_text(template_path) or _extract_text_hint(tpl)
+    text_hint = _filename_hint_text(template_path) or extract_text_hint(tpl)
     accepted = None
     accepted_log = ""
     fallback = None
@@ -397,20 +318,20 @@ def touch_mewlist_images(
                     swipe((0.5, 0.6), vector=[-0.5, 0])
                     sleep(0.8)
                     curr_screen = device().snapshot()
-                    diff = _roi_change_score(prev_screen, curr_screen)
+                    diff = roi_change_score(prev_screen, curr_screen)
                     print(f"[MEW SWIPE] roi change score={diff:.2f}")
                     if diff < 2.0:
                         swipe((0.65, 0.6), vector=[-0.6, 0])
                         sleep(0.8)
                         curr_screen = device().snapshot()
-                        diff2 = _roi_change_score(prev_screen, curr_screen)
+                        diff2 = roi_change_score(prev_screen, curr_screen)
                         print(f"[MEW SWIPE] fallback change score={diff2:.2f}")
                     prev_screen = curr_screen
                     attempts += 1
 
             if not touched:
                 print(f"'{img_file}' 이미지를 최종적으로 찾지 못했습니다.")
-                _report_thumbnail_error(
+                report_thumbnail_error(
                     img_path,
                     childNm,
                     image_folder_abs,
