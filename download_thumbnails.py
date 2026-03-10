@@ -4,7 +4,7 @@ import shutil
 import stat
 import re
 
-from urllib.parse import *
+from urllib.parse import urlsplit, urlparse, unquote
 from utils import output_path
 
 

@@ -224,10 +224,8 @@ class Ui_MainWindow(object):
         self.comboBox_6.setItemText(0, _translate("mainWindow", "Prod"))
         self.comboBox_6.setItemText(1, _translate("mainWindow", "QA"))
         self.comboBox_6.setItemText(2, _translate("mainWindow", "Dev"))
-        self.pushButton_9.setText(_translate("mainWindow", "\ubbf8\uc158 \uc644\ub8cc\n"
-" (\uc0ac\uc6a9X)"))
+        self.pushButton_9.setText(_translate("mainWindow", "커리큘럼\nAPI 테스트"))
         self.groupBox_10.setTitle(_translate("mainWindow", "Select Class"))
         self.groupBox_11.setTitle(_translate("mainWindow", "Select Student"))
-        self.pushButton_10.setText(_translate("mainWindow", "\ub85c\uadf8\uc778"))
-        self.pushButton_11.setText(_translate("mainWindow", "\uc218\uc5c5\uc2dc\uc791\n"
-"\ud14c\uc2a4\ud2b8"))
+        self.pushButton_10.setText(_translate("mainWindow", "로그인"))
+        self.pushButton_11.setText(_translate("mainWindow", "수업시작\n테스트"))

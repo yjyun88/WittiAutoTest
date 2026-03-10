@@ -417,11 +417,250 @@ def worker_study_access_bulk(log_queue, user_id, user_pwd, server, device_label)
         print(traceback.format_exc())
 
 
+def worker_curriculum_bulk(log_queue, user_id, user_pwd, server, device_label):
+    env_code = {
+        "Prod": "PRD",
+        "QA": "QA",
+        "Dev": "DEV",
+    }.get(server, str(server).upper())
+
+    match server:
+        case "Prod":
+            server = "api"
+        case "QA":
+            server = "qa-api"
+        case "Dev":
+            server = "dev-api"
+        case _:
+            server = "api"
+
+    import builtins
+    import traceback
+    from datetime import datetime
+    from openpyxl import Workbook, load_workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+
+    def _print_via_queue(*args, sep=" ", end="\n", **kwargs):
+        msg = sep.join(str(a) for a in args) + end
+        log_queue.put(msg.rstrip("\n"))
+
+    builtins.print = _print_via_queue
+
+    try:
+        print("[INFO] curriculum bulk test started")
+        token = login_step1(user_id, user_pwd, server)
+        if not token:
+            print("[ERROR] login failed. cannot load classes.")
+            return
+
+        class_resp = class_list(token, user_id, server)
+        if class_resp is None:
+            print("[ERROR] class list request failed.")
+            return
+
+        class_data = class_resp.json()
+        classes = class_data.get("result", {}).get("classList", [])
+        print(f"[INFO] classes loaded: {len(classes)}")
+
+        report_dir = os.path.join(os.getcwd(), "test_report")
+        os.makedirs(report_dir, exist_ok=True)
+        report_path = os.path.join(report_dir, "curriculum_result.xlsx")
+
+        safe_user_id = re.sub(r'[\\/:*?"<>|]', "_", str(user_id))
+        sheet_name = safe_user_id[:31]
+
+        if os.path.exists(report_path):
+            try:
+                wb = load_workbook(report_path)
+            except Exception:
+                wb = Workbook()
+        else:
+            wb = Workbook()
+
+        headers = [
+            "tested_at",
+            "server_api",
+            "classId",
+            "classNm",
+            "targetAge",
+            "studentId",
+            "studentNm",
+            "loginIdUsed",
+            "httpStatus",
+            "status",
+            "memNm",
+            "memId",
+            "error",
+        ]
+
+        if sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+        else:
+            ws = wb.create_sheet(title=sheet_name)
+            ws.append(headers)
+            for c in ws[1]:
+                c.font = Font(bold=True)
+                c.alignment = Alignment(horizontal="center", vertical="center")
+
+        # Remove default "Sheet" if it exists and is empty
+        if "Sheet" in wb.sheetnames:
+            default_ws = wb["Sheet"]
+            if default_ws.max_row <= 1 and default_ws.cell(1, 1).value is None:
+                wb.remove(default_ws)
+
+        status_col_idx = headers.index("status") + 1
+        student_nm_col_idx = headers.index("studentNm") + 1
+        mem_nm_col_idx = headers.index("memNm") + 1
+
+        total_students = 0
+        success_count = 0
+        fail_count = 0
+
+        for cls in classes:
+            class_id = str(cls.get("classId", "")).strip()
+            class_nm = str(cls.get("classNm", "")).strip()
+            target_age = str(cls.get("targetAge", "")).strip()
+            if not class_id:
+                continue
+
+            student_resp = student_list_by_class(token, class_id, server)
+            if student_resp is None:
+                print(f"[WARN] student list failed for classId={class_id}")
+                continue
+
+            students = student_resp.json().get("result", {}).get("studentList", [])
+            print(f"[INFO] class={class_nm} ({class_id}), students={len(students)}")
+
+            for student in students:
+                total_students += 1
+                tested_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                student_id = str(student.get("studentId", "")).strip()
+                student_nm = str(student.get("studentNm", "")).strip()
+                login_id_used = str(
+                    student.get("loginId")
+                    or student.get("studentLoginId")
+                    or user_id
+                ).strip()
+
+                # Step 1: study/access to get child authToken and memId (childId)
+                access_result = authenticate_study_access_detailed(student_id, login_id_used, server)
+                access_data = access_result.get("data") if isinstance(access_result, dict) else None
+                if not isinstance(access_data, dict):
+                    access_data = {}
+                access_api_result = access_data.get("result", {}) if isinstance(access_data.get("result", {}), dict) else {}
+
+                child_auth_token = str(access_api_result.get("authToken", "")).strip()
+                child_id = str(access_api_result.get("memId", "")).strip()
+                mem_nm = str(access_api_result.get("memNm", "")).strip()
+
+                if not access_result.get("ok") or not child_auth_token or not child_id:
+                    fail_count += 1
+                    ws.append([
+                        tested_at,
+                        env_code,
+                        class_id,
+                        class_nm,
+                        target_age,
+                        student_id,
+                        student_nm,
+                        login_id_used,
+                        access_result.get("status_code"),
+                        "FAIL",
+                        mem_nm,
+                        child_id,
+                        access_result.get("error", "") or "study/access failed",
+                    ])
+                    current_row = ws.max_row
+                    for col_idx in range(1, len(headers) + 1):
+                        ws.cell(row=current_row, column=col_idx).alignment = Alignment(horizontal="center", vertical="center")
+                    status_cell = ws.cell(row=current_row, column=status_col_idx)
+                    status_cell.font = Font(color="FF0000", bold=True)
+                    status_cell.fill = PatternFill(fill_type="solid", start_color="FFCCCC", end_color="FFCCCC")
+                    continue
+
+                # Step 2: call curriculum API with child's authToken and memId as childId
+                try:
+                    curriculum_resp = get_curriculum_response(child_auth_token, child_id, server)
+                    if curriculum_resp is not None:
+                        http_status = curriculum_resp.status_code
+                        ok = curriculum_resp.ok
+                        error_msg = "" if ok else curriculum_resp.text
+                    else:
+                        http_status = None
+                        ok = False
+                        error_msg = "curriculum response is None"
+                except Exception as e:
+                    http_status = None
+                    ok = False
+                    error_msg = str(e)
+
+                if ok:
+                    success_count += 1
+                else:
+                    fail_count += 1
+
+                ws.append([
+                    tested_at,
+                    env_code,
+                    class_id,
+                    class_nm,
+                    target_age,
+                    student_id,
+                    student_nm,
+                    login_id_used,
+                    http_status,
+                    "PASS" if ok else "FAIL",
+                    mem_nm,
+                    child_id,
+                    error_msg,
+                ])
+                current_row = ws.max_row
+                for col_idx in range(1, len(headers) + 1):
+                    ws.cell(row=current_row, column=col_idx).alignment = Alignment(horizontal="center", vertical="center")
+                status_cell = ws.cell(row=current_row, column=status_col_idx)
+                if ok:
+                    status_cell.font = Font(color="008000", bold=True)
+                    status_cell.fill = PatternFill(fill_type="solid", start_color="CCFFCC", end_color="CCFFCC")
+                else:
+                    status_cell.font = Font(color="FF0000", bold=True)
+                    status_cell.fill = PatternFill(fill_type="solid", start_color="FFCCCC", end_color="FFCCCC")
+
+                if student_nm != mem_nm:
+                    mismatch_fill = PatternFill(fill_type="solid", start_color="FFCCCC", end_color="FFCCCC")
+                    mismatch_font = Font(color="FF0000", bold=True)
+                    ws.cell(row=current_row, column=student_nm_col_idx).font = mismatch_font
+                    ws.cell(row=current_row, column=student_nm_col_idx).fill = mismatch_fill
+                    ws.cell(row=current_row, column=mem_nm_col_idx).font = mismatch_font
+                    ws.cell(row=current_row, column=mem_nm_col_idx).fill = mismatch_fill
+
+        for col in ws.columns:
+            col_letter = col[0].column_letter
+            max_len = 0
+            for cell in col:
+                if cell.value is None:
+                    continue
+                max_len = max(max_len, len(str(cell.value)))
+            ws.column_dimensions[col_letter].width = min(60, max(12, max_len + 2))
+
+        wb.save(report_path)
+
+        print(
+            f"[INFO] curriculum bulk completed. total={total_students}, "
+            f"success={success_count}, fail={fail_count}"
+        )
+        print(f"[INFO] report saved: {report_path}")
+
+    except Exception as e:
+        print(f"[ERROR] curriculum bulk exception: {e!r}")
+        print(traceback.format_exc())
+
+
 if getattr(sys, "frozen", False):
     import __main__
     __main__.worker_main = worker_main
 #     __main__.worker_complete_missions = worker_complete_missions
     __main__.worker_study_access_bulk = worker_study_access_bulk
+    __main__.worker_curriculum_bulk = worker_curriculum_bulk
     print("Registered workers on __main__")
 
 
@@ -492,7 +731,7 @@ class MainApp(QtWidgets.QMainWindow):
         self.ui.pushButton_11.clicked.connect(self.on_run_study_access_bulk)
         self.ui.listView.clicked.connect(self.on_class_item_clicked)
         self.ui.listView_2.clicked.connect(self.on_student_item_clicked)
-#         self.ui.pushButton_9.clicked.connect(self.on_complete_missions)
+        self.ui.pushButton_9.clicked.connect(self.on_run_curriculum_bulk)
 
     def open_report_folder(self):
         project_dir = os.path.abspath(os.getcwd())
@@ -818,6 +1057,35 @@ class MainApp(QtWidgets.QMainWindow):
         self.worker_process = Process(target=worker_study_access_bulk, args=args)
         self.worker_process.start()
         self.logger.info(f"study/access bulk 프로세스 시작 (PID={self.worker_process.pid})")
+
+        if self._drain_timer is None:
+            self._drain_timer = QtCore.QTimer(self)
+            self._drain_timer.timeout.connect(self._drain_logs)
+        self._drain_timer.start(100)
+
+    def on_run_curriculum_bulk(self):
+        if self.worker_process and self.worker_process.is_alive():
+            self.logger.warning("작업이 이미 실행 중입니다.")
+            return
+
+        user_id = self.ui.lineEdit.text().strip()
+        user_pwd = self.ui.lineEdit_2.text().strip()
+        server = self.ui.comboBox_6.currentText()
+
+        if not all([user_id, user_pwd, server]):
+            msg_box = QMessageBox()
+            msg_box.setIcon(QMessageBox.Warning)
+            msg_box.setText("ID, PW, 서버를 모두 입력해주세요.")
+            msg_box.setWindowTitle("입력 오류")
+            msg_box.exec_()
+            return
+
+        self.log_queue = Queue()
+        device_label = self.ui.comboBox_4.currentText()
+        args = (self.log_queue, user_id, user_pwd, server, device_label)
+        self.worker_process = Process(target=worker_curriculum_bulk, args=args)
+        self.worker_process.start()
+        self.logger.info(f"curriculum bulk 프로세스 시작 (PID={self.worker_process.pid})")
 
         if self._drain_timer is None:
             self._drain_timer = QtCore.QTimer(self)

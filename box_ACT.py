@@ -10,7 +10,6 @@ from Touch_template import touch_template
 from utils import Template
 
 BASE_RESOLUTION = (1920, 1200)
-# attendance_tpl = Template(r"button_images\attendance_ok.png", resolution=BASE_RESOLUTION)
 
 
 def _mean_diff(img_a, img_b):
@@ -24,7 +23,7 @@ def _mean_diff(img_a, img_b):
         return -1.0
 
 
-# \uc124\uc815 > \ud074\ub798\uc2a4 \uc120\ud0dd
+# 설정 > 클래스 선택
 def class_select(target_class_nm):
     setup_tpl = Template(
         "button_images/setup_menu.png",
@@ -84,7 +83,7 @@ def class_select(target_class_nm):
         return True
     print(f"[class_select] target not currently selected: {target_class_nm}")
 
-    class_change_text = "\ud074\ub798\uc2a4 \ubcc0\uacbd"
+    class_change_text = "클래스 변경"
     found_change = find_text(
         class_change_text,
         conf_threshold=35,
@@ -143,9 +142,9 @@ def class_select(target_class_nm):
 
 def capture_screen(img_path, childNm, save_dir="screen_captures"):
     """
-    : img_path: \uc6d0\ubcf8 \uc774\ubbf8\uc9c0 \ud30c\uc77c \uacbd\ub85c
-    : save_dir: root \uc2a4\ud06c\ub9b0\uc0f7 \uc800\uc7a5 \ud3f4\ub354 (\uae30\ubcf8 "screen_captures")
-    : return: save_path (\uc800\uc7a5\ud55c \uc774\ubbf8\uc9c0 \ud30c\uc77c \uacbd\ub85c)
+    : img_path: 원본 이미지 파일 경로
+    : save_dir: root 스크린샷 저장 폴더 (기본 "screen_captures")
+    : return: save_path (저장한 이미지 파일 경로)
     """
     try:
         base = "capture"
@@ -169,7 +168,7 @@ def capture_screen(img_path, childNm, save_dir="screen_captures"):
         img_rgb = cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)
         pil_img = Image.fromarray(img_rgb)
         pil_img.save(capture_path)
-        print(f"[CAPTURE] \ud654\uba74 \uc800\uc7a5\ub428 -> {capture_path}")
+        print(f"[CAPTURE] 화면 저장됨 -> {capture_path}")
         sleep(1)
 
         return capture_path, base
