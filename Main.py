@@ -655,12 +655,47 @@ def worker_curriculum_bulk(log_queue, user_id, user_pwd, server, device_label):
         print(traceback.format_exc())
 
 
+def worker_api_pipeline(log_queue, user_id, user_pwd, server, device_label, steps):
+    """우측 리스트의 API들을 순서대로 각각 독립 실행하여 개별 보고서를 생성한다."""
+    import builtins
+
+    def _print_via_queue(*args, sep=" ", end="\n", **kwargs):
+        msg = sep.join(str(a) for a in args) + end
+        log_queue.put(msg.rstrip("\n"))
+
+    builtins.print = _print_via_queue
+
+    print(f"[INFO] API pipeline started: {len(steps)}개 API 순차 실행")
+
+    # API 이름 → 기존 worker 함수 매핑
+    WORKER_MAP = {
+        "수업시작 (study/access)": worker_study_access_bulk,
+        "커리큘럼 조회 (curriculum)": worker_curriculum_bulk,
+    }
+
+    for idx, step_name in enumerate(steps, 1):
+        print(f"\n{'='*50}")
+        print(f"[{idx}/{len(steps)}] {step_name} 실행 시작")
+        print(f"{'='*50}")
+
+        worker_fn = WORKER_MAP.get(step_name)
+        if worker_fn is None:
+            print(f"[ERROR] 알 수 없는 API: {step_name}")
+            continue
+
+        # 기존 worker를 직접 호출 (같은 프로세스 내에서 순차 실행)
+        worker_fn(log_queue, user_id, user_pwd, server, device_label)
+
+    print(f"\n[INFO] 모든 API 실행 완료 ({len(steps)}개)")
+
+
 if getattr(sys, "frozen", False):
     import __main__
     __main__.worker_main = worker_main
 #     __main__.worker_complete_missions = worker_complete_missions
     __main__.worker_study_access_bulk = worker_study_access_bulk
     __main__.worker_curriculum_bulk = worker_curriculum_bulk
+    __main__.worker_api_pipeline = worker_api_pipeline
     print("Registered workers on __main__")
 
 
@@ -728,10 +763,14 @@ class MainApp(QtWidgets.QMainWindow):
         self.ui.pushButton_7.clicked.connect(self.on_start)
         self.ui.pushButton_8.clicked.connect(self.clear_log)
         self.ui.pushButton_10.clicked.connect(self.on_load_class_list)
-        self.ui.pushButton_11.clicked.connect(self.on_run_study_access_bulk)
         self.ui.listView.clicked.connect(self.on_class_item_clicked)
         self.ui.listView_2.clicked.connect(self.on_student_item_clicked)
-        self.ui.pushButton_9.clicked.connect(self.on_run_curriculum_bulk)
+
+        # ── API pipeline tab setup ──
+        self._init_api_pipeline_tab()
+        self.ui.pushButton_api_add.clicked.connect(self._api_pipeline_add)
+        self.ui.pushButton_api_remove.clicked.connect(self._api_pipeline_remove)
+        self.ui.pushButton_api_run.clicked.connect(self.on_run_api_pipeline)
 
     def open_report_folder(self):
         project_dir = os.path.abspath(os.getcwd())
@@ -1034,6 +1073,92 @@ class MainApp(QtWidgets.QMainWindow):
 #             self._drain_timer.timeout.connect(self._drain_logs)
 #         self._drain_timer.start(100)
 # 
+    # ── API pipeline helpers ───────────────────────────────────────────
+    API_STEPS = [
+        "수업시작 (study/access)",
+        "커리큘럼 조회 (curriculum)",
+    ]
+
+    def _init_api_pipeline_tab(self):
+        """좌측 API 목록 리스트에 사용 가능한 API 항목을 채운다."""
+        for name in self.API_STEPS:
+            self.ui.listWidget_api_available.addItem(name)
+
+    def _api_pipeline_add(self):
+        """좌측에서 선택한 API를 우측 리스트에 추가 (중복 불가)."""
+        item = self.ui.listWidget_api_available.currentItem()
+        if item is None:
+            return
+        name = item.text()
+        # 중복 체크
+        for i in range(self.ui.listWidget_api_pipeline.count()):
+            existing = self.ui.listWidget_api_pipeline.item(i).text()
+            if existing.split(". ", 1)[-1] == name:
+                return
+        idx = self.ui.listWidget_api_pipeline.count() + 1
+        self.ui.listWidget_api_pipeline.addItem(f"{idx}. {name}")
+
+    def _api_pipeline_remove(self):
+        """우측 파이프라인 리스트에서 선택 항목을 제거하고 번호 재정렬."""
+        row = self.ui.listWidget_api_pipeline.currentRow()
+        if row < 0:
+            return
+        self.ui.listWidget_api_pipeline.takeItem(row)
+        # 번호 재정렬
+        for i in range(self.ui.listWidget_api_pipeline.count()):
+            text = self.ui.listWidget_api_pipeline.item(i).text()
+            # "N. 실제이름" → "새번호. 실제이름"
+            name = text.split(". ", 1)[-1]
+            self.ui.listWidget_api_pipeline.item(i).setText(f"{i + 1}. {name}")
+
+    def _get_pipeline_steps(self):
+        """우측 리스트에서 API 이름만 순서대로 추출."""
+        steps = []
+        for i in range(self.ui.listWidget_api_pipeline.count()):
+            text = self.ui.listWidget_api_pipeline.item(i).text()
+            name = text.split(". ", 1)[-1]
+            steps.append(name)
+        return steps
+
+    def on_run_api_pipeline(self):
+        """파이프라인 실행 버튼 클릭 핸들러."""
+        if self.worker_process and self.worker_process.is_alive():
+            self.logger.warning("작업이 이미 실행 중입니다.")
+            return
+
+        steps = self._get_pipeline_steps()
+        if not steps:
+            msg_box = QMessageBox()
+            msg_box.setIcon(QMessageBox.Warning)
+            msg_box.setText("실행할 API를 파이프라인에 추가해주세요.")
+            msg_box.setWindowTitle("파이프라인 비어있음")
+            msg_box.exec_()
+            return
+
+        user_id = self.ui.lineEdit.text().strip()
+        user_pwd = self.ui.lineEdit_2.text().strip()
+        server = self.ui.comboBox_6.currentText()
+
+        if not all([user_id, user_pwd, server]):
+            msg_box = QMessageBox()
+            msg_box.setIcon(QMessageBox.Warning)
+            msg_box.setText("ID, PW, 서버를 모두 입력해주세요.")
+            msg_box.setWindowTitle("입력 오류")
+            msg_box.exec_()
+            return
+
+        self.log_queue = Queue()
+        device_label = self.ui.comboBox_4.currentText()
+        args = (self.log_queue, user_id, user_pwd, server, device_label, steps)
+        self.worker_process = Process(target=worker_api_pipeline, args=args)
+        self.worker_process.start()
+        self.logger.info(f"API pipeline 프로세스 시작 (PID={self.worker_process.pid}), steps={steps}")
+
+        if self._drain_timer is None:
+            self._drain_timer = QtCore.QTimer(self)
+            self._drain_timer.timeout.connect(self._drain_logs)
+        self._drain_timer.start(100)
+
     def on_run_study_access_bulk(self):
         if self.worker_process and self.worker_process.is_alive():
             self.logger.warning("작업이 이미 실행 중입니다.")
