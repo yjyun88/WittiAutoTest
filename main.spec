@@ -2,6 +2,7 @@
 
 import os
 import sys
+from datetime import datetime
 from PyInstaller.building.build_main import Analysis, PYZ, EXE
 
 def collect_datas(dir_name):
@@ -65,7 +66,7 @@ exe = EXE(
     a.binaries,
     a.zipfiles,
     a.datas,
-    name='Witti_AutoTest',
+    name=f'Witti_Auto_Test_{datetime.now().strftime("%y%m%d")}',
     debug=False,
     strip=False,
     upx=True,
