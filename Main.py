@@ -222,6 +222,98 @@ def worker_main(
 #         print(traceback.format_exc())
 # 
 # 
+
+# ── API 리포트 공통 유틸 ──────────────────────────────────────────
+_API_REPORT_HEADERS = [
+    "tested_at", "server_api", "classId", "classNm", "targetAge",
+    "studentId", "studentNm", "loginIdUsed", "httpStatus", "status",
+    "memNm", "memId", "error",
+]
+
+
+def init_api_report(report_name, user_id):
+    """API 테스트 리포트 워크북을 생성/로드한다. {report_name}_{YYMMDD}.xlsx"""
+    from datetime import datetime
+    from openpyxl import Workbook, load_workbook
+    from openpyxl.styles import Font, Alignment
+
+    report_dir = os.path.join(os.getcwd(), "test_report")
+    os.makedirs(report_dir, exist_ok=True)
+    date_suffix = datetime.now().strftime("%y%m%d")
+    report_path = os.path.join(report_dir, f"{report_name}_{date_suffix}.xlsx")
+
+    if os.path.exists(report_path):
+        try:
+            wb = load_workbook(report_path)
+        except Exception:
+            wb = Workbook()
+    else:
+        wb = Workbook()
+
+    safe_user_id = re.sub(r'[\\/:*?"<>|]', "_", str(user_id))
+    sheet_name = safe_user_id[:31]
+
+    if sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+    else:
+        ws = wb.create_sheet(title=sheet_name)
+        ws.append(_API_REPORT_HEADERS)
+        for c in ws[1]:
+            c.font = Font(bold=True)
+            c.alignment = Alignment(horizontal="center", vertical="center")
+
+    if "Sheet" in wb.sheetnames:
+        default_ws = wb["Sheet"]
+        if default_ws.max_row <= 1 and default_ws.cell(1, 1).value is None:
+            wb.remove(default_ws)
+
+    return report_path, wb, ws
+
+
+def style_api_row(ws, row, headers, ok, student_nm, mem_nm):
+    """API 리포트 행에 상태 스타일을 적용한다."""
+    from openpyxl.styles import Font, PatternFill, Alignment
+
+    status_col_idx = headers.index("status") + 1
+    student_nm_col_idx = headers.index("studentNm") + 1
+    mem_nm_col_idx = headers.index("memNm") + 1
+
+    for col_idx in range(1, len(headers) + 1):
+        ws.cell(row=row, column=col_idx).alignment = Alignment(horizontal="center", vertical="center")
+
+    status_cell = ws.cell(row=row, column=status_col_idx)
+    if ok:
+        status_cell.font = Font(color="008000", bold=True)
+        status_cell.fill = PatternFill(fill_type="solid", start_color="CCFFCC", end_color="CCFFCC")
+    else:
+        status_cell.font = Font(color="FF0000", bold=True)
+        status_cell.fill = PatternFill(fill_type="solid", start_color="FFCCCC", end_color="FFCCCC")
+
+    if student_nm != mem_nm:
+        mismatch_fill = PatternFill(fill_type="solid", start_color="FFCCCC", end_color="FFCCCC")
+        mismatch_font = Font(color="FF0000", bold=True)
+        ws.cell(row=row, column=student_nm_col_idx).font = mismatch_font
+        ws.cell(row=row, column=student_nm_col_idx).fill = mismatch_fill
+        ws.cell(row=row, column=mem_nm_col_idx).font = mismatch_font
+        ws.cell(row=row, column=mem_nm_col_idx).fill = mismatch_fill
+
+
+def save_api_report(wb, ws, report_path):
+    """컬럼 너비 자동 조절 후 저장한다."""
+    for col in ws.columns:
+        col_letter = col[0].column_letter
+        max_len = 0
+        for cell in col:
+            if cell.value is None:
+                continue
+            max_len = max(max_len, len(str(cell.value)))
+        ws.column_dimensions[col_letter].width = min(60, max(12, max_len + 2))
+    wb.save(report_path)
+    print(f"[INFO] report saved: {report_path}")
+
+# ── API 리포트 공통 유틸 끝 ───────────────────────────────────────
+
+
 def worker_study_access_bulk(log_queue, user_id, user_pwd, server, device_label):
     env_code = {
         "Prod": "PRD",
@@ -242,8 +334,6 @@ def worker_study_access_bulk(log_queue, user_id, user_pwd, server, device_label)
     import builtins
     import traceback
     from datetime import datetime
-    from openpyxl import Workbook, load_workbook
-    from openpyxl.styles import Font, PatternFill, Alignment
 
     def _print_via_queue(*args, sep=" ", end="\n", **kwargs):
         msg = sep.join(str(a) for a in args) + end
@@ -267,55 +357,7 @@ def worker_study_access_bulk(log_queue, user_id, user_pwd, server, device_label)
         classes = class_data.get("result", {}).get("classList", [])
         print(f"[INFO] classes loaded: {len(classes)}")
 
-        report_dir = os.path.join(os.getcwd(), "test_report")
-        os.makedirs(report_dir, exist_ok=True)
-        report_path = os.path.join(report_dir, "study_access_result.xlsx")
-
-        safe_user_id = re.sub(r'[\\/:*?"<>|]', "_", str(user_id))
-        sheet_name = safe_user_id[:31]  # Excel sheet name max 31 chars
-
-        if os.path.exists(report_path):
-            try:
-                wb = load_workbook(report_path)
-            except Exception:
-                wb = Workbook()
-        else:
-            wb = Workbook()
-
-        headers = [
-            "tested_at",
-            "server_api",
-            "classId",
-            "classNm",
-            "targetAge",
-            "studentId",
-            "studentNm",
-            "loginIdUsed",
-            "httpStatus",
-            "status",
-            "memNm",
-            "memId",
-            "error",
-        ]
-
-        if sheet_name in wb.sheetnames:
-            ws = wb[sheet_name]
-        else:
-            ws = wb.create_sheet(title=sheet_name)
-            ws.append(headers)
-            for c in ws[1]:
-                c.font = Font(bold=True)
-                c.alignment = Alignment(horizontal="center", vertical="center")
-
-        # Remove default "Sheet" if it exists and is empty
-        if "Sheet" in wb.sheetnames:
-            default_ws = wb["Sheet"]
-            if default_ws.max_row <= 1 and default_ws.cell(1, 1).value is None:
-                wb.remove(default_ws)
-
-        status_col_idx = headers.index("status") + 1
-        student_nm_col_idx = headers.index("studentNm") + 1
-        mem_nm_col_idx = headers.index("memNm") + 1
+        report_path, wb, ws = init_api_report("study_access_result", user_id)
 
         total_students = 0
         success_count = 0
@@ -376,41 +418,13 @@ def worker_study_access_bulk(log_queue, user_id, user_pwd, server, device_label)
                     api_result.get("memId", ""),
                     result.get("error", ""),
                 ])
-                current_row = ws.max_row
-                for col_idx in range(1, len(headers) + 1):
-                    ws.cell(row=current_row, column=col_idx).alignment = Alignment(horizontal="center", vertical="center")
-                status_cell = ws.cell(row=current_row, column=status_col_idx)
-                if ok:
-                    status_cell.font = Font(color="008000", bold=True)
-                    status_cell.fill = PatternFill(fill_type="solid", start_color="CCFFCC", end_color="CCFFCC")
-                else:
-                    status_cell.font = Font(color="FF0000", bold=True)
-                    status_cell.fill = PatternFill(fill_type="solid", start_color="FFCCCC", end_color="FFCCCC")
+                style_api_row(ws, ws.max_row, _API_REPORT_HEADERS, ok, student_nm, mem_nm)
 
-                if student_nm != mem_nm:
-                    mismatch_fill = PatternFill(fill_type="solid", start_color="FFCCCC", end_color="FFCCCC")
-                    mismatch_font = Font(color="FF0000", bold=True)
-                    ws.cell(row=current_row, column=student_nm_col_idx).font = mismatch_font
-                    ws.cell(row=current_row, column=student_nm_col_idx).fill = mismatch_fill
-                    ws.cell(row=current_row, column=mem_nm_col_idx).font = mismatch_font
-                    ws.cell(row=current_row, column=mem_nm_col_idx).fill = mismatch_fill
-
-        for col in ws.columns:
-            col_letter = col[0].column_letter
-            max_len = 0
-            for cell in col:
-                if cell.value is None:
-                    continue
-                max_len = max(max_len, len(str(cell.value)))
-            ws.column_dimensions[col_letter].width = min(60, max(12, max_len + 2))
-
-        wb.save(report_path)
-
+        save_api_report(wb, ws, report_path)
         print(
             f"[INFO] study/access bulk completed. total={total_students}, "
             f"success={success_count}, fail={fail_count}"
         )
-        print(f"[INFO] report saved: {report_path}")
 
     except Exception as e:
         print(f"[ERROR] study/access bulk exception: {e!r}")
@@ -437,8 +451,6 @@ def worker_curriculum_bulk(log_queue, user_id, user_pwd, server, device_label):
     import builtins
     import traceback
     from datetime import datetime
-    from openpyxl import Workbook, load_workbook
-    from openpyxl.styles import Font, PatternFill, Alignment
 
     def _print_via_queue(*args, sep=" ", end="\n", **kwargs):
         msg = sep.join(str(a) for a in args) + end
@@ -462,55 +474,7 @@ def worker_curriculum_bulk(log_queue, user_id, user_pwd, server, device_label):
         classes = class_data.get("result", {}).get("classList", [])
         print(f"[INFO] classes loaded: {len(classes)}")
 
-        report_dir = os.path.join(os.getcwd(), "test_report")
-        os.makedirs(report_dir, exist_ok=True)
-        report_path = os.path.join(report_dir, "curriculum_result.xlsx")
-
-        safe_user_id = re.sub(r'[\\/:*?"<>|]', "_", str(user_id))
-        sheet_name = safe_user_id[:31]
-
-        if os.path.exists(report_path):
-            try:
-                wb = load_workbook(report_path)
-            except Exception:
-                wb = Workbook()
-        else:
-            wb = Workbook()
-
-        headers = [
-            "tested_at",
-            "server_api",
-            "classId",
-            "classNm",
-            "targetAge",
-            "studentId",
-            "studentNm",
-            "loginIdUsed",
-            "httpStatus",
-            "status",
-            "memNm",
-            "memId",
-            "error",
-        ]
-
-        if sheet_name in wb.sheetnames:
-            ws = wb[sheet_name]
-        else:
-            ws = wb.create_sheet(title=sheet_name)
-            ws.append(headers)
-            for c in ws[1]:
-                c.font = Font(bold=True)
-                c.alignment = Alignment(horizontal="center", vertical="center")
-
-        # Remove default "Sheet" if it exists and is empty
-        if "Sheet" in wb.sheetnames:
-            default_ws = wb["Sheet"]
-            if default_ws.max_row <= 1 and default_ws.cell(1, 1).value is None:
-                wb.remove(default_ws)
-
-        status_col_idx = headers.index("status") + 1
-        student_nm_col_idx = headers.index("studentNm") + 1
-        mem_nm_col_idx = headers.index("memNm") + 1
+        report_path, wb, ws = init_api_report("curriculum_result", user_id)
 
         total_students = 0
         success_count = 0
@@ -570,12 +534,7 @@ def worker_curriculum_bulk(log_queue, user_id, user_pwd, server, device_label):
                         child_id,
                         access_result.get("error", "") or "study/access failed",
                     ])
-                    current_row = ws.max_row
-                    for col_idx in range(1, len(headers) + 1):
-                        ws.cell(row=current_row, column=col_idx).alignment = Alignment(horizontal="center", vertical="center")
-                    status_cell = ws.cell(row=current_row, column=status_col_idx)
-                    status_cell.font = Font(color="FF0000", bold=True)
-                    status_cell.fill = PatternFill(fill_type="solid", start_color="FFCCCC", end_color="FFCCCC")
+                    style_api_row(ws, ws.max_row, _API_REPORT_HEADERS, False, student_nm, mem_nm)
                     continue
 
                 # Step 2: call curriculum API with child's authToken and memId as childId
@@ -614,41 +573,13 @@ def worker_curriculum_bulk(log_queue, user_id, user_pwd, server, device_label):
                     child_id,
                     error_msg,
                 ])
-                current_row = ws.max_row
-                for col_idx in range(1, len(headers) + 1):
-                    ws.cell(row=current_row, column=col_idx).alignment = Alignment(horizontal="center", vertical="center")
-                status_cell = ws.cell(row=current_row, column=status_col_idx)
-                if ok:
-                    status_cell.font = Font(color="008000", bold=True)
-                    status_cell.fill = PatternFill(fill_type="solid", start_color="CCFFCC", end_color="CCFFCC")
-                else:
-                    status_cell.font = Font(color="FF0000", bold=True)
-                    status_cell.fill = PatternFill(fill_type="solid", start_color="FFCCCC", end_color="FFCCCC")
+                style_api_row(ws, ws.max_row, _API_REPORT_HEADERS, ok, student_nm, mem_nm)
 
-                if student_nm != mem_nm:
-                    mismatch_fill = PatternFill(fill_type="solid", start_color="FFCCCC", end_color="FFCCCC")
-                    mismatch_font = Font(color="FF0000", bold=True)
-                    ws.cell(row=current_row, column=student_nm_col_idx).font = mismatch_font
-                    ws.cell(row=current_row, column=student_nm_col_idx).fill = mismatch_fill
-                    ws.cell(row=current_row, column=mem_nm_col_idx).font = mismatch_font
-                    ws.cell(row=current_row, column=mem_nm_col_idx).fill = mismatch_fill
-
-        for col in ws.columns:
-            col_letter = col[0].column_letter
-            max_len = 0
-            for cell in col:
-                if cell.value is None:
-                    continue
-                max_len = max(max_len, len(str(cell.value)))
-            ws.column_dimensions[col_letter].width = min(60, max(12, max_len + 2))
-
-        wb.save(report_path)
-
+        save_api_report(wb, ws, report_path)
         print(
             f"[INFO] curriculum bulk completed. total={total_students}, "
             f"success={success_count}, fail={fail_count}"
         )
-        print(f"[INFO] report saved: {report_path}")
 
     except Exception as e:
         print(f"[ERROR] curriculum bulk exception: {e!r}")
@@ -770,6 +701,8 @@ class MainApp(QtWidgets.QMainWindow):
         self._init_api_pipeline_tab()
         self.ui.pushButton_api_add.clicked.connect(self._api_pipeline_add)
         self.ui.pushButton_api_remove.clicked.connect(self._api_pipeline_remove)
+        self.ui.listWidget_api_available.doubleClicked.connect(self._api_pipeline_add)
+        self.ui.listWidget_api_pipeline.doubleClicked.connect(self._api_pipeline_remove)
         self.ui.pushButton_api_run.clicked.connect(self.on_run_api_pipeline)
 
     def open_report_folder(self):
