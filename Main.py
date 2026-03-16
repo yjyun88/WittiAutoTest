@@ -26,6 +26,13 @@ from request_API import (
     authenticate_study_access,
     authenticate_study_access_detailed,
     get_study_access_auth,
+    get_parent_report,
+    post_attendance_curriculum,
+    get_witti_school_main,
+    get_aram_bookworld_subject,
+    get_witti_school_ebook_main,
+    get_tv_main,
+    get_teacher_activity_report,
 )
 
 def get_adb_path():
@@ -237,7 +244,7 @@ def init_api_report(report_name, user_id):
     from openpyxl import Workbook, load_workbook
     from openpyxl.styles import Font, Alignment
 
-    report_dir = os.path.join(os.getcwd(), "test_report")
+    report_dir = os.path.join(os.getcwd(), "test_report", "api_test")
     os.makedirs(report_dir, exist_ok=True)
     date_suffix = datetime.now().strftime("%y%m%d")
     report_path = os.path.join(report_dir, f"{report_name}_{date_suffix}.xlsx")
@@ -586,7 +593,1229 @@ def worker_curriculum_bulk(log_queue, user_id, user_pwd, server, device_label):
         print(traceback.format_exc())
 
 
-def worker_api_pipeline(log_queue, user_id, user_pwd, server, device_label, steps):
+def worker_attendance_curriculum_bulk(log_queue, user_id, user_pwd, server, device_label):
+    env_code = {
+        "Prod": "PRD",
+        "QA": "QA",
+        "Dev": "DEV",
+    }.get(server, str(server).upper())
+
+    match server:
+        case "Prod":
+            server = "api"
+        case "QA":
+            server = "qa-api"
+        case "Dev":
+            server = "dev-api"
+        case _:
+            server = "api"
+
+    import builtins
+    import traceback
+    from datetime import datetime
+
+    def _print_via_queue(*args, sep=" ", end="\n", **kwargs):
+        msg = sep.join(str(a) for a in args) + end
+        log_queue.put(msg.rstrip("\n"))
+
+    builtins.print = _print_via_queue
+
+    try:
+        print("[INFO] attendance/curriculum bulk test started")
+        token = login_step1(user_id, user_pwd, server)
+        if not token:
+            print("[ERROR] login failed. cannot load classes.")
+            return
+
+        class_resp = class_list(token, user_id, server)
+        if class_resp is None:
+            print("[ERROR] class list request failed.")
+            return
+
+        class_data = class_resp.json()
+        classes = class_data.get("result", {}).get("classList", [])
+        print(f"[INFO] classes loaded: {len(classes)}")
+
+        report_path, wb, ws = init_api_report("attendance_curriculum_result", user_id)
+
+        total_students = 0
+        success_count = 0
+        fail_count = 0
+
+        for cls in classes:
+            class_id = str(cls.get("classId", "")).strip()
+            class_nm = str(cls.get("classNm", "")).strip()
+            target_age = str(cls.get("targetAge", "")).strip()
+            if not class_id:
+                continue
+
+            student_resp = student_list_by_class(token, class_id, server)
+            if student_resp is None:
+                print(f"[WARN] student list failed for classId={class_id}")
+                continue
+
+            students = student_resp.json().get("result", {}).get("studentList", [])
+            print(f"[INFO] class={class_nm} ({class_id}), students={len(students)}")
+
+            for student in students:
+                total_students += 1
+                tested_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                student_id = str(student.get("studentId", "")).strip()
+                student_nm = str(student.get("studentNm", "")).strip()
+                login_id_used = str(
+                    student.get("loginId")
+                    or student.get("studentLoginId")
+                    or user_id
+                ).strip()
+
+                # Step 1: study/access to get child authToken
+                access_result = authenticate_study_access_detailed(student_id, login_id_used, server)
+                access_data = access_result.get("data") if isinstance(access_result, dict) else None
+                if not isinstance(access_data, dict):
+                    access_data = {}
+                access_api_result = access_data.get("result", {}) if isinstance(access_data.get("result", {}), dict) else {}
+
+                child_auth_token = str(access_api_result.get("authToken", "")).strip()
+                child_id = str(access_api_result.get("memId", "")).strip()
+                mem_nm = str(access_api_result.get("memNm", "")).strip()
+
+                if not access_result.get("ok") or not child_auth_token:
+                    fail_count += 1
+                    ws.append([
+                        tested_at, env_code, class_id, class_nm, target_age,
+                        student_id, student_nm, login_id_used,
+                        access_result.get("status_code"),
+                        "FAIL", mem_nm, child_id,
+                        access_result.get("error", "") or "study/access failed",
+                    ])
+                    style_api_row(ws, ws.max_row, _API_REPORT_HEADERS, False, student_nm, mem_nm)
+                    continue
+
+                # Step 2: call attendance/curriculum API
+                try:
+                    att_resp = post_attendance_curriculum(child_auth_token, server)
+                    if att_resp is not None:
+                        http_status = att_resp.status_code
+                        ok = att_resp.ok
+                        error_msg = "" if ok else att_resp.text
+                    else:
+                        http_status = None
+                        ok = False
+                        error_msg = "attendance/curriculum response is None"
+                except Exception as e:
+                    http_status = None
+                    ok = False
+                    error_msg = str(e)
+
+                if ok:
+                    success_count += 1
+                else:
+                    fail_count += 1
+
+                ws.append([
+                    tested_at, env_code, class_id, class_nm, target_age,
+                    student_id, student_nm, login_id_used,
+                    http_status,
+                    "PASS" if ok else "FAIL",
+                    mem_nm, child_id, error_msg,
+                ])
+                style_api_row(ws, ws.max_row, _API_REPORT_HEADERS, ok, student_nm, mem_nm)
+
+        save_api_report(wb, ws, report_path)
+        print(
+            f"[INFO] attendance/curriculum bulk completed. total={total_students}, "
+            f"success={success_count}, fail={fail_count}"
+        )
+
+    except Exception as e:
+        print(f"[ERROR] attendance/curriculum bulk exception: {e!r}")
+        print(traceback.format_exc())
+
+
+def worker_witti_school_main_bulk(log_queue, user_id, user_pwd, server, device_label):
+    env_code = {
+        "Prod": "PRD",
+        "QA": "QA",
+        "Dev": "DEV",
+    }.get(server, str(server).upper())
+
+    match server:
+        case "Prod":
+            server = "api"
+        case "QA":
+            server = "qa-api"
+        case "Dev":
+            server = "dev-api"
+        case _:
+            server = "api"
+
+    import builtins
+    import traceback
+    from datetime import datetime
+
+    def _print_via_queue(*args, sep=" ", end="\n", **kwargs):
+        msg = sep.join(str(a) for a in args) + end
+        log_queue.put(msg.rstrip("\n"))
+
+    builtins.print = _print_via_queue
+
+    try:
+        print("[INFO] witti-school/main bulk test started")
+        token = login_step1(user_id, user_pwd, server)
+        if not token:
+            print("[ERROR] login failed. cannot load classes.")
+            return
+
+        class_resp = class_list(token, user_id, server)
+        if class_resp is None:
+            print("[ERROR] class list request failed.")
+            return
+
+        class_data = class_resp.json()
+        classes = class_data.get("result", {}).get("classList", [])
+        print(f"[INFO] classes loaded: {len(classes)}")
+
+        report_path, wb, ws = init_api_report("witti_school_main_result", user_id)
+
+        total_students = 0
+        success_count = 0
+        fail_count = 0
+
+        for cls in classes:
+            class_id = str(cls.get("classId", "")).strip()
+            class_nm = str(cls.get("classNm", "")).strip()
+            target_age = str(cls.get("targetAge", "")).strip()
+            if not class_id:
+                continue
+
+            student_resp = student_list_by_class(token, class_id, server)
+            if student_resp is None:
+                print(f"[WARN] student list failed for classId={class_id}")
+                continue
+
+            students = student_resp.json().get("result", {}).get("studentList", [])
+            print(f"[INFO] class={class_nm} ({class_id}), students={len(students)}")
+
+            for student in students:
+                total_students += 1
+                tested_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                student_id = str(student.get("studentId", "")).strip()
+                student_nm = str(student.get("studentNm", "")).strip()
+                login_id_used = str(
+                    student.get("loginId")
+                    or student.get("studentLoginId")
+                    or user_id
+                ).strip()
+
+                # Step 1: study/access to get child authToken
+                access_result = authenticate_study_access_detailed(student_id, login_id_used, server)
+                access_data = access_result.get("data") if isinstance(access_result, dict) else None
+                if not isinstance(access_data, dict):
+                    access_data = {}
+                access_api_result = access_data.get("result", {}) if isinstance(access_data.get("result", {}), dict) else {}
+
+                child_auth_token = str(access_api_result.get("authToken", "")).strip()
+                child_id = str(access_api_result.get("memId", "")).strip()
+                mem_nm = str(access_api_result.get("memNm", "")).strip()
+
+                if not access_result.get("ok") or not child_auth_token:
+                    fail_count += 1
+                    ws.append([
+                        tested_at, env_code, class_id, class_nm, target_age,
+                        student_id, student_nm, login_id_used,
+                        access_result.get("status_code"),
+                        "FAIL", mem_nm, child_id,
+                        access_result.get("error", "") or "study/access failed",
+                    ])
+                    style_api_row(ws, ws.max_row, _API_REPORT_HEADERS, False, student_nm, mem_nm)
+                    continue
+
+                # Step 2: call witti-school/main API
+                try:
+                    resp = get_witti_school_main(child_auth_token, server)
+                    if resp is not None:
+                        http_status = resp.status_code
+                        ok = resp.ok
+                        error_msg = "" if ok else resp.text
+                    else:
+                        http_status = None
+                        ok = False
+                        error_msg = "witti-school/main response is None"
+                except Exception as e:
+                    http_status = None
+                    ok = False
+                    error_msg = str(e)
+
+                if ok:
+                    success_count += 1
+                else:
+                    fail_count += 1
+
+                ws.append([
+                    tested_at, env_code, class_id, class_nm, target_age,
+                    student_id, student_nm, login_id_used,
+                    http_status,
+                    "PASS" if ok else "FAIL",
+                    mem_nm, child_id, error_msg,
+                ])
+                style_api_row(ws, ws.max_row, _API_REPORT_HEADERS, ok, student_nm, mem_nm)
+
+        save_api_report(wb, ws, report_path)
+        print(
+            f"[INFO] witti-school/main bulk completed. total={total_students}, "
+            f"success={success_count}, fail={fail_count}"
+        )
+
+    except Exception as e:
+        print(f"[ERROR] witti-school/main bulk exception: {e!r}")
+        print(traceback.format_exc())
+
+
+def worker_aram_bookworld_subject_bulk(log_queue, user_id, user_pwd, server, device_label):
+    env_code = {
+        "Prod": "PRD",
+        "QA": "QA",
+        "Dev": "DEV",
+    }.get(server, str(server).upper())
+
+    match server:
+        case "Prod":
+            server = "api"
+        case "QA":
+            server = "qa-api"
+        case "Dev":
+            server = "dev-api"
+        case _:
+            server = "api"
+
+    import builtins
+    import traceback
+    from datetime import datetime
+
+    def _print_via_queue(*args, sep=" ", end="\n", **kwargs):
+        msg = sep.join(str(a) for a in args) + end
+        log_queue.put(msg.rstrip("\n"))
+
+    builtins.print = _print_via_queue
+
+    try:
+        print("[INFO] aram-bookworld/subject bulk test started")
+        token = login_step1(user_id, user_pwd, server)
+        if not token:
+            print("[ERROR] login failed. cannot load classes.")
+            return
+
+        class_resp = class_list(token, user_id, server)
+        if class_resp is None:
+            print("[ERROR] class list request failed.")
+            return
+
+        class_data = class_resp.json()
+        classes = class_data.get("result", {}).get("classList", [])
+        print(f"[INFO] classes loaded: {len(classes)}")
+
+        report_path, wb, ws = init_api_report("aram_bookworld_subject_result", user_id)
+
+        total_students = 0
+        success_count = 0
+        fail_count = 0
+
+        for cls in classes:
+            class_id = str(cls.get("classId", "")).strip()
+            class_nm = str(cls.get("classNm", "")).strip()
+            target_age = str(cls.get("targetAge", "")).strip()
+            if not class_id:
+                continue
+
+            student_resp = student_list_by_class(token, class_id, server)
+            if student_resp is None:
+                print(f"[WARN] student list failed for classId={class_id}")
+                continue
+
+            students = student_resp.json().get("result", {}).get("studentList", [])
+            print(f"[INFO] class={class_nm} ({class_id}), students={len(students)}")
+
+            for student in students:
+                total_students += 1
+                tested_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                student_id = str(student.get("studentId", "")).strip()
+                student_nm = str(student.get("studentNm", "")).strip()
+                login_id_used = str(
+                    student.get("loginId")
+                    or student.get("studentLoginId")
+                    or user_id
+                ).strip()
+
+                # Step 1: study/access
+                access_result = authenticate_study_access_detailed(student_id, login_id_used, server)
+                access_data = access_result.get("data") if isinstance(access_result, dict) else None
+                if not isinstance(access_data, dict):
+                    access_data = {}
+                access_api_result = access_data.get("result", {}) if isinstance(access_data.get("result", {}), dict) else {}
+
+                child_auth_token = str(access_api_result.get("authToken", "")).strip()
+                child_id = str(access_api_result.get("memId", "")).strip()
+                mem_nm = str(access_api_result.get("memNm", "")).strip()
+
+                if not access_result.get("ok") or not child_auth_token:
+                    fail_count += 1
+                    ws.append([
+                        tested_at, env_code, class_id, class_nm, target_age,
+                        student_id, student_nm, login_id_used,
+                        access_result.get("status_code"),
+                        "FAIL", mem_nm, child_id,
+                        access_result.get("error", "") or "study/access failed",
+                    ])
+                    style_api_row(ws, ws.max_row, _API_REPORT_HEADERS, False, student_nm, mem_nm)
+                    continue
+
+                # Step 2: witti-school/main으로 prodId, ptnrId 추출
+                ptnr_id = "1102"
+                prod_id = "P0001"
+                try:
+                    main_resp = get_witti_school_main(child_auth_token, server)
+                    if main_resp and main_resp.ok:
+                        main_data = main_resp.json().get("result", {})
+                        prod_list = main_data.get("prodList") or main_data.get("productList") or []
+                        if prod_list:
+                            prod_id = prod_list[0].get("prodId", prod_id)
+                            ptnr_id = str(prod_list[0].get("ptnrId", ptnr_id))
+                except Exception:
+                    pass
+
+                # Step 3: aram-bookworld/subject 호출
+                try:
+                    resp = get_aram_bookworld_subject(child_auth_token, ptnr_id, prod_id, server)
+                    if resp is not None:
+                        http_status = resp.status_code
+                        ok = resp.ok
+                        error_msg = "" if ok else resp.text
+                    else:
+                        http_status = None
+                        ok = False
+                        error_msg = "aram-bookworld/subject response is None"
+                except Exception as e:
+                    http_status = None
+                    ok = False
+                    error_msg = str(e)
+
+                if ok:
+                    success_count += 1
+                else:
+                    fail_count += 1
+
+                ws.append([
+                    tested_at, env_code, class_id, class_nm, target_age,
+                    student_id, student_nm, login_id_used,
+                    http_status,
+                    "PASS" if ok else "FAIL",
+                    mem_nm, child_id, error_msg,
+                ])
+                style_api_row(ws, ws.max_row, _API_REPORT_HEADERS, ok, student_nm, mem_nm)
+
+        save_api_report(wb, ws, report_path)
+        print(
+            f"[INFO] aram-bookworld/subject bulk completed. total={total_students}, "
+            f"success={success_count}, fail={fail_count}"
+        )
+
+    except Exception as e:
+        print(f"[ERROR] aram-bookworld/subject bulk exception: {e!r}")
+        print(traceback.format_exc())
+
+
+def _make_simple_get_worker(api_name, report_file_name, api_call_fn):
+    """GET API (파라미터 없이 자녀 토큰만 필요)용 bulk worker를 생성하는 팩토리."""
+
+    def worker(log_queue, user_id, user_pwd, server, device_label):
+        env_code = {
+            "Prod": "PRD", "QA": "QA", "Dev": "DEV",
+        }.get(server, str(server).upper())
+
+        match server:
+            case "Prod":
+                server = "api"
+            case "QA":
+                server = "qa-api"
+            case "Dev":
+                server = "dev-api"
+            case _:
+                server = "api"
+
+        import builtins, traceback
+        from datetime import datetime
+
+        def _print_via_queue(*args, sep=" ", end="\n", **kwargs):
+            msg = sep.join(str(a) for a in args) + end
+            log_queue.put(msg.rstrip("\n"))
+
+        builtins.print = _print_via_queue
+
+        try:
+            print(f"[INFO] {api_name} bulk test started")
+            token = login_step1(user_id, user_pwd, server)
+            if not token:
+                print("[ERROR] login failed.")
+                return
+
+            class_resp = class_list(token, user_id, server)
+            if class_resp is None:
+                print("[ERROR] class list request failed.")
+                return
+
+            classes = class_resp.json().get("result", {}).get("classList", [])
+            print(f"[INFO] classes loaded: {len(classes)}")
+
+            report_path, wb, ws = init_api_report(report_file_name, user_id)
+            total, success, fail = 0, 0, 0
+
+            for cls in classes:
+                class_id = str(cls.get("classId", "")).strip()
+                class_nm = str(cls.get("classNm", "")).strip()
+                target_age = str(cls.get("targetAge", "")).strip()
+                if not class_id:
+                    continue
+
+                stu_resp = student_list_by_class(token, class_id, server)
+                if stu_resp is None:
+                    print(f"[WARN] student list failed for classId={class_id}")
+                    continue
+
+                students = stu_resp.json().get("result", {}).get("studentList", [])
+                print(f"[INFO] class={class_nm} ({class_id}), students={len(students)}")
+
+                for student in students:
+                    total += 1
+                    tested_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    student_id = str(student.get("studentId", "")).strip()
+                    student_nm = str(student.get("studentNm", "")).strip()
+                    login_id_used = str(
+                        student.get("loginId") or student.get("studentLoginId") or user_id
+                    ).strip()
+
+                    access_result = authenticate_study_access_detailed(student_id, login_id_used, server)
+                    access_data = access_result.get("data") if isinstance(access_result, dict) else None
+                    if not isinstance(access_data, dict):
+                        access_data = {}
+                    api_res = access_data.get("result", {}) if isinstance(access_data.get("result", {}), dict) else {}
+
+                    child_auth = str(api_res.get("authToken", "")).strip()
+                    child_id = str(api_res.get("memId", "")).strip()
+                    mem_nm = str(api_res.get("memNm", "")).strip()
+
+                    if not access_result.get("ok") or not child_auth:
+                        fail += 1
+                        ws.append([
+                            tested_at, env_code, class_id, class_nm, target_age,
+                            student_id, student_nm, login_id_used,
+                            access_result.get("status_code"),
+                            "FAIL", mem_nm, child_id,
+                            access_result.get("error", "") or "study/access failed",
+                        ])
+                        style_api_row(ws, ws.max_row, _API_REPORT_HEADERS, False, student_nm, mem_nm)
+                        continue
+
+                    try:
+                        resp = api_call_fn(child_auth, server)
+                        if resp is not None:
+                            http_status = resp.status_code
+                            ok = resp.ok
+                            error_msg = "" if ok else resp.text
+                        else:
+                            http_status = None
+                            ok = False
+                            error_msg = f"{api_name} response is None"
+                    except Exception as e:
+                        http_status = None
+                        ok = False
+                        error_msg = str(e)
+
+                    if ok:
+                        success += 1
+                    else:
+                        fail += 1
+
+                    ws.append([
+                        tested_at, env_code, class_id, class_nm, target_age,
+                        student_id, student_nm, login_id_used,
+                        http_status, "PASS" if ok else "FAIL",
+                        mem_nm, child_id, error_msg,
+                    ])
+                    style_api_row(ws, ws.max_row, _API_REPORT_HEADERS, ok, student_nm, mem_nm)
+
+            save_api_report(wb, ws, report_path)
+            print(f"[INFO] {api_name} bulk completed. total={total}, success={success}, fail={fail}")
+
+        except Exception as e:
+            print(f"[ERROR] {api_name} bulk exception: {e!r}")
+            print(traceback.format_exc())
+
+    return worker
+
+
+worker_ebook_main_bulk = _make_simple_get_worker(
+    "e-book/main", "ebook_main_result", get_witti_school_ebook_main)
+
+worker_tv_main_bulk = _make_simple_get_worker(
+    "tv/main", "tv_main_result", get_tv_main)
+
+
+def worker_parent_report_bulk(log_queue, user_id, user_pwd, server, device_label):
+    env_code = {
+        "Prod": "PRD",
+        "QA": "QA",
+        "Dev": "DEV",
+    }.get(server, str(server).upper())
+
+    match server:
+        case "Prod":
+            server = "api"
+        case "QA":
+            server = "qa-api"
+        case "Dev":
+            server = "dev-api"
+        case _:
+            server = "api"
+
+    import builtins
+    import re
+    import traceback
+    from datetime import datetime, date
+
+    def _print_via_queue(*args, sep=" ", end="\n", **kwargs):
+        msg = sep.join(str(a) for a in args) + end
+        log_queue.put(msg.rstrip("\n"))
+
+    builtins.print = _print_via_queue
+
+    try:
+        print("[INFO] parent report bulk test started")
+        token = login_step1(user_id, user_pwd, server)
+        if not token:
+            print("[ERROR] login failed. cannot load classes.")
+            return
+
+        class_resp = class_list(token, user_id, server)
+        if class_resp is None:
+            print("[ERROR] class list request failed.")
+            return
+
+        class_data = class_resp.json()
+        classes = class_data.get("result", {}).get("classList", [])
+        print(f"[INFO] classes loaded: {len(classes)}")
+
+        # 현재 날짜 기준 year, month, week 계산
+        today = date.today()
+        year = today.year
+        month = today.month
+        # ISO week 기준으로 해당 월의 몇 번째 주인지 계산
+        first_day = today.replace(day=1)
+        week = (today.day + first_day.weekday() - 1) // 7 + 1
+
+        report_path, wb, ws = init_api_report("parent_report_result", user_id)
+
+        total_students = 0
+        success_count = 0
+        fail_count = 0
+
+        for cls in classes:
+            class_id = str(cls.get("classId", "")).strip()
+            class_nm = str(cls.get("classNm", "")).strip()
+            target_age = str(cls.get("targetAge", "")).strip()
+            if not class_id:
+                continue
+
+            # curriculumTp: targetAge가 NEULBOM이면 1, 아니면 0
+            curriculum_tp = 1 if target_age == "NEULBOM" else 0
+            # childAge: targetAge에서 숫자 추출 (AGE_3 → 3, NEULBOM → 0)
+            _age_match = re.search(r"\d+", target_age)
+            child_age_from_class = int(_age_match.group()) if _age_match else 0
+
+            student_resp = student_list_by_class(token, class_id, server)
+            if student_resp is None:
+                print(f"[WARN] student list failed for classId={class_id}")
+                continue
+
+            students = student_resp.json().get("result", {}).get("studentList", [])
+            print(f"[INFO] class={class_nm} ({class_id}), students={len(students)}")
+
+            for student in students:
+                total_students += 1
+                tested_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                student_id = str(student.get("studentId", "")).strip()
+                student_nm = str(student.get("studentNm", "")).strip()
+                login_id_used = str(
+                    student.get("loginId")
+                    or student.get("studentLoginId")
+                    or user_id
+                ).strip()
+
+                # Step 1: study/access to get child authToken, memId
+                access_result = authenticate_study_access_detailed(student_id, login_id_used, server)
+                access_data = access_result.get("data") if isinstance(access_result, dict) else None
+                if not isinstance(access_data, dict):
+                    access_data = {}
+                access_api_result = access_data.get("result", {}) if isinstance(access_data.get("result", {}), dict) else {}
+
+                child_auth_token = str(access_api_result.get("authToken", "")).strip()
+                child_id = str(access_api_result.get("memId", "")).strip()
+                mem_nm = str(access_api_result.get("memNm", "")).strip()
+
+                if not access_result.get("ok") or not child_auth_token or not child_id:
+                    fail_count += 1
+                    ws.append([
+                        tested_at,
+                        env_code,
+                        class_id,
+                        class_nm,
+                        target_age,
+                        student_id,
+                        student_nm,
+                        login_id_used,
+                        access_result.get("status_code"),
+                        "FAIL",
+                        mem_nm,
+                        child_id,
+                        access_result.get("error", "") or "study/access failed",
+                    ])
+                    style_api_row(ws, ws.max_row, _API_REPORT_HEADERS, False, student_nm, mem_nm)
+                    continue
+
+                # Step 2: call parentReport API
+                try:
+                    report_resp = get_parent_report(
+                        child_auth_token, child_id, child_age_from_class,
+                        curriculum_tp, year, month, week, server,
+                    )
+                    if report_resp is not None:
+                        http_status = report_resp.status_code
+                        ok = report_resp.ok
+                        error_msg = "" if ok else report_resp.text
+                    else:
+                        http_status = None
+                        ok = False
+                        error_msg = "parentReport response is None"
+                except Exception as e:
+                    http_status = None
+                    ok = False
+                    error_msg = str(e)
+
+                if ok:
+                    success_count += 1
+                else:
+                    fail_count += 1
+
+                ws.append([
+                    tested_at,
+                    env_code,
+                    class_id,
+                    class_nm,
+                    target_age,
+                    student_id,
+                    student_nm,
+                    login_id_used,
+                    http_status,
+                    "PASS" if ok else "FAIL",
+                    mem_nm,
+                    child_id,
+                    error_msg,
+                ])
+                style_api_row(ws, ws.max_row, _API_REPORT_HEADERS, ok, student_nm, mem_nm)
+
+        save_api_report(wb, ws, report_path)
+        print(
+            f"[INFO] parent report bulk completed. total={total_students}, "
+            f"success={success_count}, fail={fail_count}"
+        )
+
+    except Exception as e:
+        print(f"[ERROR] parent report bulk exception: {e!r}")
+        print(traceback.format_exc())
+
+
+def worker_teacher_activity_report_bulk(log_queue, user_id, user_pwd, server, device_label):
+    env_code = {
+        "Prod": "PRD", "QA": "QA", "Dev": "DEV",
+    }.get(server, str(server).upper())
+
+    match server:
+        case "Prod":
+            server = "api"
+        case "QA":
+            server = "qa-api"
+        case "Dev":
+            server = "dev-api"
+        case _:
+            server = "api"
+
+    import builtins
+    import re
+    import traceback
+    from datetime import datetime, date
+
+    def _print_via_queue(*args, sep=" ", end="\n", **kwargs):
+        msg = sep.join(str(a) for a in args) + end
+        log_queue.put(msg.rstrip("\n"))
+
+    builtins.print = _print_via_queue
+
+    try:
+        print("[INFO] teacherActivityReport bulk test started")
+        token = login_step1(user_id, user_pwd, server)
+        if not token:
+            print("[ERROR] login failed.")
+            return
+
+        class_resp = class_list(token, user_id, server)
+        if class_resp is None:
+            print("[ERROR] class list request failed.")
+            return
+
+        classes = class_resp.json().get("result", {}).get("classList", [])
+        print(f"[INFO] classes loaded: {len(classes)}")
+
+        today = date.today()
+        year = today.year
+        month = today.month
+        first_day = today.replace(day=1)
+        week = (today.day + first_day.weekday() - 1) // 7 + 1
+
+        report_path, wb, ws = init_api_report("teacher_activity_report_result", user_id)
+
+        total_students = 0
+        success_count = 0
+        fail_count = 0
+
+        for cls in classes:
+            class_id = str(cls.get("classId", "")).strip()
+            class_nm = str(cls.get("classNm", "")).strip()
+            target_age = str(cls.get("targetAge", "")).strip()
+            if not class_id:
+                continue
+
+            curriculum_tp = 1 if target_age == "NEULBOM" else 0
+            _age_match = re.search(r"\d+", target_age)
+            child_age_from_class = int(_age_match.group()) if _age_match else 0
+
+            student_resp = student_list_by_class(token, class_id, server)
+            if student_resp is None:
+                print(f"[WARN] student list failed for classId={class_id}")
+                continue
+
+            students = student_resp.json().get("result", {}).get("studentList", [])
+            print(f"[INFO] class={class_nm} ({class_id}), students={len(students)}")
+
+            for student in students:
+                total_students += 1
+                tested_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                student_id = str(student.get("studentId", "")).strip()
+                student_nm = str(student.get("studentNm", "")).strip()
+                login_id_used = str(
+                    student.get("loginId")
+                    or student.get("studentLoginId")
+                    or user_id
+                ).strip()
+
+                access_result = authenticate_study_access_detailed(student_id, login_id_used, server)
+                access_data = access_result.get("data") if isinstance(access_result, dict) else None
+                if not isinstance(access_data, dict):
+                    access_data = {}
+                access_api_result = access_data.get("result", {}) if isinstance(access_data.get("result", {}), dict) else {}
+
+                child_auth_token = str(access_api_result.get("authToken", "")).strip()
+                child_id = str(access_api_result.get("memId", "")).strip()
+                mem_nm = str(access_api_result.get("memNm", "")).strip()
+
+                if not access_result.get("ok") or not child_auth_token or not child_id:
+                    fail_count += 1
+                    ws.append([
+                        tested_at, env_code, class_id, class_nm, target_age,
+                        student_id, student_nm, login_id_used,
+                        access_result.get("status_code"),
+                        "FAIL", mem_nm, child_id,
+                        access_result.get("error", "") or "study/access failed",
+                    ])
+                    style_api_row(ws, ws.max_row, _API_REPORT_HEADERS, False, student_nm, mem_nm)
+                    continue
+
+                try:
+                    report_resp = get_teacher_activity_report(
+                        child_auth_token, child_id, child_age_from_class,
+                        curriculum_tp, year, month, week, server,
+                    )
+                    if report_resp is not None:
+                        http_status = report_resp.status_code
+                        ok = report_resp.ok
+                        error_msg = "" if ok else report_resp.text
+                    else:
+                        http_status = None
+                        ok = False
+                        error_msg = "teacherActivityReport response is None"
+                except Exception as e:
+                    http_status = None
+                    ok = False
+                    error_msg = str(e)
+
+                if ok:
+                    success_count += 1
+                else:
+                    fail_count += 1
+
+                ws.append([
+                    tested_at, env_code, class_id, class_nm, target_age,
+                    student_id, student_nm, login_id_used,
+                    http_status,
+                    "PASS" if ok else "FAIL",
+                    mem_nm, child_id, error_msg,
+                ])
+                style_api_row(ws, ws.max_row, _API_REPORT_HEADERS, ok, student_nm, mem_nm)
+
+        save_api_report(wb, ws, report_path)
+        print(
+            f"[INFO] teacherActivityReport bulk completed. total={total_students}, "
+            f"success={success_count}, fail={fail_count}"
+        )
+
+    except Exception as e:
+        print(f"[ERROR] teacherActivityReport bulk exception: {e!r}")
+        print(traceback.format_exc())
+
+
+def worker_all_api_test(log_queue, user_id, user_pwd, server, device_label, steps,
+                        gui_ctx=None):
+    """단일 계정(첫 번째 학생)으로 steps에 포함된 API를 호출하고 엑셀을 생성한다."""
+    import builtins
+    import traceback
+    import re as _re
+    from datetime import datetime, date
+    from openpyxl import Workbook, load_workbook
+    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+
+    server_label = {"Prod": "Prod", "QA": "QA", "Dev": "Dev"}.get(server, server)
+
+    match server:
+        case "Prod":
+            srv = "api"
+        case "QA":
+            srv = "qa-api"
+        case "Dev":
+            srv = "dev-api"
+        case _:
+            srv = "api"
+
+    def _print_via_queue(*args, sep=" ", end="\n", **kwargs):
+        msg = sep.join(str(a) for a in args) + end
+        log_queue.put(msg.rstrip("\n"))
+
+    builtins.print = _print_via_queue
+
+    results = []  # (api_name, method, path, status, mark, result_data, error_detail)
+
+    def _record(api_name, method, path, resp=None, error=None):
+        if resp is not None:
+            status = resp.status_code
+            ok = resp.ok
+            result_data = resp.text[:1000] if ok else ""
+            error_detail = "" if ok else resp.text[:1000]
+        elif error is not None:
+            status = 0
+            ok = False
+            result_data = ""
+            error_detail = str(error)
+        else:
+            status = 0
+            ok = False
+            result_data = ""
+            error_detail = "unknown"
+        mark = "PASS" if ok else "FAIL"
+        results.append((api_name, method, path, status, mark, result_data, error_detail))
+        print(f"  [{mark}] {method:6s} {path} -> {status} {error_detail[:120]}")
+
+    # 공유 컨텍스트 (API 간 데이터 전달용)
+    ctx = {"prod_id": "P0001", "ptnr_id": "1102"}
+
+    try:
+        print(f"[INFO] ALL API test started ({len(steps)}개)")
+
+        # ── 로그인 & 반 정보 (공통 전처리) ──
+        token = login_step1(user_id, user_pwd, srv)
+        if not token:
+            print("[ERROR] login failed.")
+            return
+
+        class_resp = class_list(token, user_id, srv)
+        if class_resp is None:
+            print("[ERROR] class list failed.")
+            return
+
+        classes = class_resp.json().get("result", {}).get("classList", [])
+        if not classes:
+            print("[ERROR] no classes found.")
+            return
+
+        first_class = classes[0]
+        class_id = str(first_class.get("classId", ""))
+        target_age = str(first_class.get("targetAge", ""))
+        print(f"[INFO] class: {first_class.get('classNm')} ({class_id})")
+
+        stu_resp = student_list_by_class(token, class_id, srv)
+        if stu_resp is None:
+            print("[ERROR] student list failed.")
+            return
+
+        students = stu_resp.json().get("result", {}).get("studentList", [])
+        if not students:
+            print("[ERROR] no students found.")
+            return
+
+        first_stu = students[0]
+        student_id = str(first_stu.get("studentId", ""))
+        print(f"[INFO] student: {first_stu.get('studentNm')} ({student_id})")
+
+        # GUI에서 선택된 class/student 정보 반영
+        _gui = gui_ctx or {}
+        if _gui.get("class_nm"):
+            first_class = {"classNm": _gui["class_nm"], "classId": _gui.get("class_id", ""), "targetAge": _gui.get("target_age", "")}
+            class_id = _gui.get("class_id") or class_id
+            target_age = _gui.get("target_age") or target_age
+        if _gui.get("student_nm"):
+            first_stu = {"studentNm": _gui["student_nm"], "studentId": _gui.get("student_id", "")}
+            student_id = _gui.get("student_id") or student_id
+
+        # study/access (child token 획득)
+        print("\n=== 수업시작 (study/access) ===")
+        try:
+            access_result = authenticate_study_access_detailed(student_id, user_id, srv)
+            access_data = access_result.get("data") if isinstance(access_result, dict) else None
+            if not isinstance(access_data, dict):
+                access_data = {}
+            api_res = access_data.get("result", {}) if isinstance(access_data.get("result", {}), dict) else {}
+
+            child_token = _gui.get("auth_token") or str(api_res.get("authToken", "")).strip()
+            child_id = _gui.get("mem_id") or str(api_res.get("memId", "")).strip()
+
+            if child_token:
+                _record("수업시작", "POST", "/authenticate/study/access",
+                        resp=type("R", (), {"status_code": 200, "ok": True, "text": str(access_data)[:1000]})())
+            else:
+                _record("수업시작", "POST", "/authenticate/study/access",
+                        error="no child token in response")
+                print("[ERROR] study/access failed. no child token.")
+                return
+        except Exception as e:
+            _record("수업시작", "POST", "/authenticate/study/access", error=e)
+            print(f"[ERROR] study/access exception: {e!r}")
+            return
+
+        print(f"[INFO] childToken: {child_token[:20]}..., childId: {child_id}")
+
+        # report용 파라미터
+        curriculum_tp = 1 if target_age == "NEULBOM" else 0
+        _am = _re.search(r"\d+", target_age)
+        child_age_int = int(_am.group()) if _am else 0
+        today = date.today()
+        year, month = today.year, today.month
+        first_day = today.replace(day=1)
+        week = (today.day + first_day.weekday() - 1) // 7 + 1
+
+        # ── API 호출 함수 매핑 ──
+        # 각 함수는 (display_name, method, path, response) 를 반환
+        def _call_curriculum():
+            resp = get_curriculum_response(child_token, child_id, srv)
+            return ("커리큘럼 조회", "GET", "/witti-box/curriculum", resp)
+
+        def _call_attendance_curriculum():
+            resp = post_attendance_curriculum(child_token, srv)
+            return ("출석 시간 전송", "POST", "/witti-app/attendance/curriculum", resp)
+
+        def _call_witti_school_main():
+            resp = get_witti_school_main(child_token, srv)
+            # prodId, ptnrId 추출하여 ctx에 저장
+            if resp is not None and resp.ok:
+                sm = resp.json().get("result", {})
+                pl = sm.get("prodList") or sm.get("productList") or []
+                if pl:
+                    ctx["prod_id"] = pl[0].get("prodId", ctx["prod_id"])
+                    ctx["ptnr_id"] = str(pl[0].get("ptnrId", ctx["ptnr_id"]))
+            return ("위티스쿨 메인", "GET", "/witti-school/main", resp)
+
+        def _call_aram_bookworld_subject():
+            resp = get_aram_bookworld_subject(child_token, ctx["ptnr_id"], ctx["prod_id"], srv)
+            return ("아람북월드 과목", "GET", "/witti-school/aram-bookworld/subject", resp)
+
+        def _call_ebook_main():
+            resp = get_witti_school_ebook_main(child_token, srv)
+            return ("도서관 메인", "GET", "/witti-school/e-book/main", resp)
+
+        def _call_tv_main():
+            resp = get_tv_main(child_token, srv)
+            return ("위티TV 메인", "GET", "/tv/main", resp)
+
+        def _call_teacher_activity_report():
+            resp = get_teacher_activity_report(child_token, child_id, child_age_int, curriculum_tp, year, month, week, srv)
+            return ("선생님 활동현황", "POST", "/report/teacherActivityReport", resp)
+
+        def _call_parent_report():
+            resp = get_parent_report(child_token, child_id, child_age_int, curriculum_tp, year, month, week, srv)
+            return ("학습 리포트", "POST", "/report/parentReport", resp)
+
+        # step 이름 → 호출 함수 매핑 (새 API 추가 시 여기만 추가)
+        CALL_MAP = {
+            "커리큘럼 조회 (curriculum)": _call_curriculum,
+            "출석 시간 전송 (attendance/curriculum)": _call_attendance_curriculum,
+            "위티스쿨 메인 (witti-school/main)": _call_witti_school_main,
+            "아람북월드 과목 (aram-bookworld/subject)": _call_aram_bookworld_subject,
+            "도서관 메인 (e-book/main)": _call_ebook_main,
+            "위티TV 메인 (tv/main)": _call_tv_main,
+            "선생님 활동현황 (report/teacherActivityReport)": _call_teacher_activity_report,
+            "학습 리포트 > 부모(학생) / 주간 (report/parentReport)": _call_parent_report,
+        }
+
+        # ── steps 순회하며 API 호출 ──
+        for step_name in steps:
+            if step_name == "수업시작 (study/access)":
+                continue  # 이미 위에서 처리됨
+
+            call_fn = CALL_MAP.get(step_name)
+            if call_fn is None:
+                print(f"[WARN] ALL 매핑에 없는 API: {step_name}, skip")
+                continue
+
+            print(f"\n=== {step_name} ===")
+            try:
+                display_name, method, path, resp = call_fn()
+                if resp is not None:
+                    _record(display_name, method, path, resp=resp)
+                else:
+                    _record(display_name, method, path, error="API returned None")
+            except Exception as e:
+                # call_fn 내부에서 display_name을 알 수 없으므로 step_name 사용
+                _record(step_name, "?", "?", error=e)
+
+        # ── 결과 요약 ──
+        pass_count = sum(1 for r in results if r[4] == "PASS")
+        fail_count = sum(1 for r in results if r[4] == "FAIL")
+        print(f"\n총 {len(results)}개 API | PASS: {pass_count} | FAIL: {fail_count}")
+
+        # ── 엑셀 저장 ──
+        date_str = datetime.now().strftime("%y%m%d")
+        report_dir = os.path.join(os.getcwd(), "test_report", "api_test")
+        os.makedirs(report_dir, exist_ok=True)
+        file_path = os.path.join(report_dir, f"ALL_api_test_{date_str}.xlsx")
+
+        if os.path.exists(file_path):
+            wb = load_workbook(file_path)
+        else:
+            wb = Workbook()
+            wb.remove(wb.active)
+
+        time_str = datetime.now().strftime("%H-%M-%S")
+        sheet_name = f"{user_id}_{time_str}"[:31]
+        if sheet_name in wb.sheetnames:
+            del wb[sheet_name]
+        ws = wb.create_sheet(title=sheet_name)
+
+        # 스타일
+        header_font = Font(name="맑은 고딕", bold=True, size=11, color="FFFFFF")
+        header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+        header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell_font = Font(name="맑은 고딕", size=10)
+        center_align = Alignment(horizontal="center", vertical="center")
+        cell_align = Alignment(vertical="center", wrap_text=True)
+        pass_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+        fail_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+        pass_font = Font(name="맑은 고딕", size=10, color="006100", bold=True)
+        fail_font = Font(name="맑은 고딕", size=10, color="9C0006", bold=True)
+        thin_border = Border(
+            left=Side(style="thin"), right=Side(style="thin"),
+            top=Side(style="thin"), bottom=Side(style="thin"),
+        )
+
+        # 요약 행
+        ws.merge_cells("A1:I1")
+        sc = ws["A1"]
+        class_nm = first_class.get("classNm", "")
+        student_nm = first_stu.get("studentNm", "")
+        sc.value = (
+            f"API 테스트 결과 — {datetime.now().strftime('%Y-%m-%d %H:%M')}  |  "
+            f"서버: {server_label}  |  계정: {user_id}  |  "
+            f"반: {class_nm} ({class_id})  |  학생: {student_nm} ({student_id})  |  "
+            f"총 {len(results)}개  |  PASS: {pass_count}  |  FAIL: {fail_count}"
+        )
+        sc.font = Font(name="맑은 고딕", bold=True, size=12)
+        sc.alignment = Alignment(vertical="center")
+        ws.row_dimensions[1].height = 30
+
+        # 헤더
+        col_headers = ["No.", "서버", "카테고리", "Method", "API Path", "Status", "결과", "Result Data", "에러 상세"]
+        ws.append([])
+        for ci, h in enumerate(col_headers, 1):
+            c = ws.cell(row=3, column=ci, value=h)
+            c.font = header_font
+            c.fill = header_fill
+            c.alignment = header_align
+            c.border = thin_border
+        ws.row_dimensions[3].height = 25
+
+        # 데이터
+        for i, (tag, method, path, status, mark, rd, ed) in enumerate(results, 1):
+            row = i + 3
+            vals = [i, server_label, tag, method, path, status if status else "", mark, rd, ed]
+            for ci, v in enumerate(vals, 1):
+                c = ws.cell(row=row, column=ci, value=v)
+                c.font = cell_font
+                c.border = thin_border
+                c.alignment = center_align if ci in (1, 2, 4, 6, 7) else cell_align
+
+            rc = ws.cell(row=row, column=7)
+            if mark == "PASS":
+                rc.fill = pass_fill
+                rc.font = pass_font
+            else:
+                rc.fill = fail_fill
+                rc.font = fail_font
+
+        # 카테고리 배경색 교대
+        tag_colors = {}
+        color_toggle = ["F2F7FB", "FFFFFF"]
+        cidx = 0
+        prev_tag = None
+        for i, (tag, *_) in enumerate(results):
+            if tag != prev_tag:
+                if tag not in tag_colors:
+                    tag_colors[tag] = color_toggle[cidx % 2]
+                    cidx += 1
+                prev_tag = tag
+            row = i + 4
+            bg = PatternFill(start_color=tag_colors[tag], end_color=tag_colors[tag], fill_type="solid")
+            for col in range(1, 8):
+                c = ws.cell(row=row, column=col)
+                if col != 7:
+                    c.fill = bg
+
+        ws.column_dimensions["A"].width = 6
+        ws.column_dimensions["B"].width = 9
+        ws.column_dimensions["C"].width = 16
+        ws.column_dimensions["D"].width = 9
+        ws.column_dimensions["E"].width = 48
+        ws.column_dimensions["F"].width = 9
+        ws.column_dimensions["G"].width = 9
+        ws.column_dimensions["H"].width = 60
+        ws.column_dimensions["I"].width = 60
+
+        ws.auto_filter.ref = f"A3:I{len(results) + 3}"
+        ws.freeze_panes = "A4"
+
+        wb.save(file_path)
+        print(f"[INFO] 엑셀 저장 완료: {file_path} (탭: {sheet_name})")
+
+    except Exception as e:
+        print(f"[ERROR] ALL API test exception: {e!r}")
+        print(traceback.format_exc())
+
+
+def worker_api_pipeline(log_queue, user_id, user_pwd, server, device_label, steps,
+                        gui_ctx=None):
     """우측 리스트의 API들을 순서대로 각각 독립 실행하여 개별 보고서를 생성한다."""
     import builtins
 
@@ -602,7 +1831,22 @@ def worker_api_pipeline(log_queue, user_id, user_pwd, server, device_label, step
     WORKER_MAP = {
         "수업시작 (study/access)": worker_study_access_bulk,
         "커리큘럼 조회 (curriculum)": worker_curriculum_bulk,
+        "출석 시간 전송 (attendance/curriculum)": worker_attendance_curriculum_bulk,
+        "위티스쿨 메인 (witti-school/main)": worker_witti_school_main_bulk,
+        "아람북월드 과목 (aram-bookworld/subject)": worker_aram_bookworld_subject_bulk,
+        "도서관 메인 (e-book/main)": worker_ebook_main_bulk,
+        "위티TV 메인 (tv/main)": worker_tv_main_bulk,
+        "선생님 활동현황 (report/teacherActivityReport)": worker_teacher_activity_report_bulk,
+        "학습 리포트 > 부모(학생) / 주간 (report/parentReport)": worker_parent_report_bulk,
     }
+
+    # ALL 선택 시 단일 계정 전체 API 테스트
+    if "ALL" in steps:
+        all_steps = [k for k in WORKER_MAP.keys()]
+        print(f"[INFO] ALL 모드: 단일 계정 전체 API 테스트 실행 ({len(all_steps)}개)")
+        worker_all_api_test(log_queue, user_id, user_pwd, server, device_label, all_steps,
+                            gui_ctx=gui_ctx)
+        return
 
     for idx, step_name in enumerate(steps, 1):
         print(f"\n{'='*50}")
@@ -626,6 +1870,14 @@ if getattr(sys, "frozen", False):
 #     __main__.worker_complete_missions = worker_complete_missions
     __main__.worker_study_access_bulk = worker_study_access_bulk
     __main__.worker_curriculum_bulk = worker_curriculum_bulk
+    __main__.worker_attendance_curriculum_bulk = worker_attendance_curriculum_bulk
+    __main__.worker_witti_school_main_bulk = worker_witti_school_main_bulk
+    __main__.worker_aram_bookworld_subject_bulk = worker_aram_bookworld_subject_bulk
+    __main__.worker_ebook_main_bulk = worker_ebook_main_bulk
+    __main__.worker_tv_main_bulk = worker_tv_main_bulk
+    __main__.worker_teacher_activity_report_bulk = worker_teacher_activity_report_bulk
+    __main__.worker_parent_report_bulk = worker_parent_report_bulk
+    __main__.worker_all_api_test = worker_all_api_test
     __main__.worker_api_pipeline = worker_api_pipeline
     print("Registered workers on __main__")
 
@@ -657,13 +1909,13 @@ class MainApp(QtWidgets.QMainWindow):
         ensure_adb_server()
         self.load_devices()
 
-        self.ui.listView_2.setGeometry(QtCore.QRect(20, 20, 341, 275))
+        self.ui.listView_2.setGeometry(QtCore.QRect(10, 20, 301, 352))
         self.label_mem_id = QtWidgets.QLabel(self.ui.groupBox_11)
-        self.label_mem_id.setGeometry(QtCore.QRect(20, 302, 341, 24))
+        self.label_mem_id.setGeometry(QtCore.QRect(10, 379, 301, 24))
         self.label_mem_id.setObjectName("label_mem_id")
         self.label_mem_id.setText("memId: -")
         self.label_auth_token = QtWidgets.QLabel(self.ui.groupBox_11)
-        self.label_auth_token.setGeometry(QtCore.QRect(20, 330, 341, 24))
+        self.label_auth_token.setGeometry(QtCore.QRect(10, 407, 301, 24))
         self.label_auth_token.setObjectName("label_auth_token")
         self.label_auth_token.setText("authToken: -")
 
@@ -673,10 +1925,17 @@ class MainApp(QtWidgets.QMainWindow):
         self.study_access_mem_nm = None
         self.study_access_mem_id = None
         self.study_access_auth_token = None
+        self.selected_class_nm = None
+        self.selected_class_id = None
+        self.selected_target_age = None
+        self.selected_student_nm = None
+        self.selected_student_id = None
         self.class_list_model = QtGui.QStandardItemModel(self)
         self.student_list_model = QtGui.QStandardItemModel(self)
         self.ui.listView.setModel(self.class_list_model)
+        self.ui.listView.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         self.ui.listView_2.setModel(self.student_list_model)
+        self.ui.listView_2.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
 
         self.ui.comboBox.setItemData(1, 0, QtCore.Qt.UserRole)   # ALL
         self.ui.comboBox.setItemData(2, 1, QtCore.Qt.UserRole)   # 한글
@@ -686,10 +1945,10 @@ class MainApp(QtWidgets.QMainWindow):
         self.ui.lineEdit_2.setText("mini1122@@")
 
         self.ui.pushButton.clicked.connect(self.close)
-        self.ui.pushButton_2.clicked.connect(self.on_start)
+        self.ui.pushButton_2.clicked.connect(self.open_report_folder)
         self.ui.pushButton_3.clicked.connect(self.on_start)
         self.ui.pushButton_4.clicked.connect(self.on_stop)
-        self.ui.pushButton_5.clicked.connect(self.open_report_folder)
+        self.ui.pushButton_5.clicked.connect(self.on_start)
         self.ui.pushButton_6.clicked.connect(self.load_devices)
         self.ui.pushButton_7.clicked.connect(self.on_start)
         self.ui.pushButton_8.clicked.connect(self.clear_log)
@@ -701,6 +1960,8 @@ class MainApp(QtWidgets.QMainWindow):
         self._init_api_pipeline_tab()
         self.ui.pushButton_api_add.clicked.connect(self._api_pipeline_add)
         self.ui.pushButton_api_remove.clicked.connect(self._api_pipeline_remove)
+        self.ui.listWidget_api_available.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        self.ui.listWidget_api_pipeline.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         self.ui.listWidget_api_available.doubleClicked.connect(self._api_pipeline_add)
         self.ui.listWidget_api_pipeline.doubleClicked.connect(self._api_pipeline_remove)
         self.ui.pushButton_api_run.clicked.connect(self.on_run_api_pipeline)
@@ -808,6 +2069,11 @@ class MainApp(QtWidgets.QMainWindow):
         if not class_id:
             self.logger.warning("선택한 클래스의 classId를 찾을 수 없습니다.")
             return
+        # 선택된 class 정보 저장
+        self.selected_class_id = class_id
+        display = index.data(QtCore.Qt.DisplayRole) or ""
+        self.selected_class_nm = display.split(" / ")[0] if " / " in display else display
+        self.selected_target_age = display.split(" / ")[1] if " / " in display else ""
         if not self.class_auth_token or not self.class_api_server:
             self.logger.error("학생 목록 조회 실패: authToken/server 정보가 없습니다. 먼저 Class List를 조회해주세요.")
             return
@@ -850,6 +2116,9 @@ class MainApp(QtWidgets.QMainWindow):
         if not student_id:
             self.logger.warning("선택한 학생의 studentId를 찾을 수 없습니다.")
             return
+        # 선택된 student 정보 저장
+        self.selected_student_id = student_id
+        self.selected_student_nm = str(student_data.get("studentNm", "")).strip()
         if not login_id:
             self.logger.error("study/access 호출 실패: loginId를 찾을 수 없습니다.")
             return
@@ -948,7 +2217,7 @@ class MainApp(QtWidgets.QMainWindow):
         if btn_name == "pushButton_7" and self.ui.comboBox_5.currentIndex()==0:
             self.logger.error("Song을 선택해주세요.")
             return
-        if btn_name in {"pushButton_2", "pushButton_3", "pushButton_7"} and not self.study_access_auth_token:
+        if btn_name in {"pushButton_5", "pushButton_3", "pushButton_7"} and not self.study_access_auth_token:
             self.logger.error("study/access authToken이 없습니다. 먼저 학생을 선택해주세요.")
             return
 
@@ -1008,8 +2277,16 @@ class MainApp(QtWidgets.QMainWindow):
 # 
     # ── API pipeline helpers ───────────────────────────────────────────
     API_STEPS = [
+        "ALL",
         "수업시작 (study/access)",
         "커리큘럼 조회 (curriculum)",
+        "출석 시간 전송 (attendance/curriculum)",
+        "위티스쿨 메인 (witti-school/main)",
+        "아람북월드 과목 (aram-bookworld/subject)",
+        "도서관 메인 (e-book/main)",
+        "위티TV 메인 (tv/main)",
+        "선생님 활동현황 (report/teacherActivityReport)",
+        "학습 리포트 > 부모(학생) / 주간 (report/parentReport)",
     ]
 
     def _init_api_pipeline_tab(self):
@@ -1023,6 +2300,18 @@ class MainApp(QtWidgets.QMainWindow):
         if item is None:
             return
         name = item.text()
+
+        # ALL이 이미 있으면 다른 항목 추가 불가
+        for i in range(self.ui.listWidget_api_pipeline.count()):
+            existing = self.ui.listWidget_api_pipeline.item(i).text().split(". ", 1)[-1]
+            if existing == "ALL" and name != "ALL":
+                return
+        # ALL을 추가하면 기존 항목 모두 비우고 ALL만 남김
+        if name == "ALL":
+            self.ui.listWidget_api_pipeline.clear()
+            self.ui.listWidget_api_pipeline.addItem("1. ALL")
+            return
+
         # 중복 체크
         for i in range(self.ui.listWidget_api_pipeline.count()):
             existing = self.ui.listWidget_api_pipeline.item(i).text()
@@ -1082,7 +2371,16 @@ class MainApp(QtWidgets.QMainWindow):
 
         self.log_queue = Queue()
         device_label = self.ui.comboBox_4.currentText()
-        args = (self.log_queue, user_id, user_pwd, server, device_label, steps)
+        gui_ctx = {
+            "auth_token": self.study_access_auth_token,
+            "mem_id": self.study_access_mem_id,
+            "class_nm": self.selected_class_nm,
+            "class_id": self.selected_class_id,
+            "target_age": self.selected_target_age,
+            "student_nm": self.selected_student_nm,
+            "student_id": self.selected_student_id,
+        }
+        args = (self.log_queue, user_id, user_pwd, server, device_label, steps, gui_ctx)
         self.worker_process = Process(target=worker_api_pipeline, args=args)
         self.worker_process.start()
         self.logger.info(f"API pipeline 프로세스 시작 (PID={self.worker_process.pid}), steps={steps}")

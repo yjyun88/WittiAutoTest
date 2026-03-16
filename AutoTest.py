@@ -69,7 +69,7 @@ def AutoTest_Start(
     cleanup_thumbnails()
     time.sleep(1)
 
-    if btn_name == "pushButton_2":
+    if btn_name == "pushButton_5":
         # 6) WittiBox content validation
         if not mem_id or not mem_nm:
             print("[ERROR] study/access memId/memNm is missing. Cannot run WittiBox test.")

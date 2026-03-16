@@ -279,6 +279,175 @@ def get_curriculum_response(authToken, childId, server):
         return None
 
 
+# 위티스쿨 메인 화면 조회 API
+def get_witti_school_main(authToken, server):
+    try:
+        url = f"https://{server}.wittiverse.com/v2/witti-school/main"
+        headers = {
+            'Authorization': f'Bearer {authToken}',
+        }
+
+        response = requests.get(url, headers=headers, timeout=20)
+        response.raise_for_status()
+        return response
+
+    except requests.exceptions.RequestException as e:
+        print(f"[ERROR] 위티스쿨 메인 조회 실패 (네트워크/서버 오류): {e}")
+        return None
+    except Exception as e:
+        print(f"[ERROR] 위티스쿨 메인 조회 중 예기치 않은 오류 발생: {e}")
+        return None
+
+
+# 아람북월드 과목 조회 API
+def get_aram_bookworld_subject(authToken, ptnrId, prodId, server):
+    try:
+        url = f"https://{server}.wittiverse.com/v2/witti-school/aram-bookworld/subject"
+        headers = {
+            'Authorization': f'Bearer {authToken}',
+        }
+        params = {
+            "ptnrId": ptnrId,
+            "prodId": prodId,
+        }
+
+        response = requests.get(url, headers=headers, params=params, timeout=20)
+        response.raise_for_status()
+        return response
+
+    except requests.exceptions.RequestException as e:
+        print(f"[ERROR] 아람북월드 과목 조회 실패 (네트워크/서버 오류): {e}")
+        return None
+    except Exception as e:
+        print(f"[ERROR] 아람북월드 과목 조회 중 예기치 않은 오류 발생: {e}")
+        return None
+
+
+# 학습 리포트 > 선생님 / 이 주 활동현황
+def get_teacher_activity_report(authToken, childId, childAge, curriculumTp, year, month, week, server):
+    try:
+        url = f"https://{server}.wittiverse.com/v2/report/teacherActivityReport"
+        headers = {
+            'Authorization': f'Bearer {authToken}',
+            'Content-Type': 'application/json',
+        }
+        body = {
+            "curriculumTp": curriculumTp,
+            "childAge": childAge,
+            "childId": childId,
+            "year": year,
+            "month": month,
+            "week": week,
+            "reportType": "WEEK",
+        }
+
+        response = requests.post(url, headers=headers, json=body, timeout=20)
+        response.raise_for_status()
+        return response
+
+    except requests.exceptions.RequestException as e:
+        print(f"[ERROR] 선생님 활동현황 리포트 조회 실패 (네트워크/서버 오류): {e}")
+        return None
+    except Exception as e:
+        print(f"[ERROR] 선생님 활동현황 리포트 조회 중 예기치 않은 오류 발생: {e}")
+        return None
+
+
+# 위티스쿨 도서관 메인 조회 API
+def get_witti_school_ebook_main(authToken, server):
+    try:
+        url = f"https://{server}.wittiverse.com/v2/witti-school/e-book/main"
+        headers = {
+            'Authorization': f'Bearer {authToken}',
+        }
+
+        response = requests.get(url, headers=headers, timeout=20)
+        response.raise_for_status()
+        return response
+
+    except requests.exceptions.RequestException as e:
+        print(f"[ERROR] 도서관 메인 조회 실패 (네트워크/서버 오류): {e}")
+        return None
+    except Exception as e:
+        print(f"[ERROR] 도서관 메인 조회 중 예기치 않은 오류 발생: {e}")
+        return None
+
+
+# 위티TV 메인 화면 조회 API
+def get_tv_main(authToken, server):
+    try:
+        url = f"https://{server}.wittiverse.com/v2/tv/main"
+        headers = {
+            'Authorization': f'Bearer {authToken}',
+        }
+
+        response = requests.get(url, headers=headers, timeout=20)
+        response.raise_for_status()
+        return response
+
+    except requests.exceptions.RequestException as e:
+        print(f"[ERROR] 위티TV 메인 조회 실패 (네트워크/서버 오류): {e}")
+        return None
+    except Exception as e:
+        print(f"[ERROR] 위티TV 메인 조회 중 예기치 않은 오류 발생: {e}")
+        return None
+
+
+# 출석 시간 전송 API
+def post_attendance_curriculum(authToken, server, isMidNight="false"):
+    try:
+        url = f"https://{server}.wittiverse.com/v2/witti-app/attendance/curriculum"
+        headers = {
+            'Authorization': f'Bearer {authToken}',
+            'Content-Type': 'application/json',
+        }
+        body = {
+            "isMidNight": isMidNight,
+        }
+
+        response = requests.post(url, headers=headers, json=body, timeout=20)
+        response.raise_for_status()
+        return response
+
+    except requests.exceptions.RequestException as e:
+        print(f"[ERROR] 출석 시간 전송 실패 (네트워크/서버 오류): {e}")
+        return None
+    except Exception as e:
+        print(f"[ERROR] 출석 시간 전송 중 예기치 않은 오류 발생: {e}")
+        return None
+
+
+# 학습 리포트 > 부모(학생) / 주간
+def get_parent_report(authToken, childId, childAge, curriculumTp, year, month, week, server):
+    try:
+        url = f"https://{server}.wittiverse.com/v2/report/parentReport"
+        headers = {
+            'Authorization': f'Bearer {authToken}',
+            'Content-Type': 'application/json',
+        }
+        body = {
+            "curriculumTp": curriculumTp,
+            "childAge": childAge,
+            "childId": childId,
+            "year": year,
+            "month": month,
+            "week": week,
+            "reportType": "WEEK",
+            "parentTp": "P",
+        }
+
+        response = requests.post(url, headers=headers, json=body, timeout=20)
+        response.raise_for_status()
+        return response
+
+    except requests.exceptions.RequestException as e:
+        print(f"[ERROR] 부모 리포트 조회 실패 (네트워크/서버 오류): {e}")
+        return None
+    except Exception as e:
+        print(f"[ERROR] 부모 리포트 조회 중 예기치 않은 오류 발생: {e}")
+        return None
+
+
 # 오늘의 미션 '로그 출력' 및 '학습 완료 처리'
 def complete_today_missions(auth_tokens_by_child, all_child_missions, server):
     """
