@@ -1210,7 +1210,8 @@ def worker_parent_report_bulk(log_queue, user_id, user_pwd, server, device_label
         month = today.month
         # ISO week 기준으로 해당 월의 몇 번째 주인지 계산
         first_day = today.replace(day=1)
-        week = (today.day + first_day.weekday() - 1) // 7 + 1
+        first_mon = 1 + (7 - first_day.weekday()) % 7
+        week = max(1, (today.day - first_mon) // 7 + 1)
 
         report_path, wb, ws = init_api_report("parent_report_result", user_id)
 
@@ -1378,7 +1379,8 @@ def worker_teacher_activity_report_bulk(log_queue, user_id, user_pwd, server, de
         year = today.year
         month = today.month
         first_day = today.replace(day=1)
-        week = (today.day + first_day.weekday() - 1) // 7 + 1
+        first_mon = 1 + (7 - first_day.weekday()) % 7
+        week = max(1, (today.day - first_mon) // 7 + 1)
 
         report_path, wb, ws = init_api_report("teacher_activity_report_result", user_id)
 
@@ -1616,7 +1618,8 @@ def worker_all_api_test(log_queue, user_id, user_pwd, server, device_label, step
         today = date.today()
         year, month = today.year, today.month
         first_day = today.replace(day=1)
-        week = (today.day + first_day.weekday() - 1) // 7 + 1
+        first_mon = 1 + (7 - first_day.weekday()) % 7
+        week = max(1, (today.day - first_mon) // 7 + 1)
 
         # ── API 호출 함수 매핑 ──
         # 각 함수는 (display_name, method, path, response) 를 반환
