@@ -134,6 +134,7 @@ def download_all_thumbnails(childNm, curriculum_data, server):
                     "name":       name,
                     "contentId":  contentId,
                     "subjectNo":  item.get("subjectNo"),
+                    "activityStage": item.get("activityStage"),
                     "webviewUrl": webviewUrl,
                 })
 
