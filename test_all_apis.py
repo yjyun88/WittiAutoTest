@@ -269,26 +269,34 @@ log("위티박스", "GET", "/config/apps/list", r)
 
 r = safe_request("GET", "/witti-box/curriculum", headers=AUTH, params={"childId": child_id})
 log("위티박스", "GET", "/witti-box/curriculum", r)
+curriculum_r = r  # 커리큘럼 응답 저장
 
 r = safe_request("POST", "/witti-app/attendance/curriculum", headers=AUTH_JSON,
     json_body={"isMidNight": "false"})
 log("위티박스", "POST", "/witti-app/attendance/curriculum", r)
 
-# report API들 - curriculumTp: int, childAge: string
-curriculum_tp = 1 if target_age == "NEULBOM" else 0
+# 커리큘럼 응답에서 report 파라미터 추출
+cur_result = curriculum_r.json().get("result", {}) if curriculum_r and curriculum_r.ok else {}
+cur_year = datetime.now().year
+cur_month = cur_result.get("month", 0)
+cur_week = cur_result.get("week", 0)
+curriculum_tp = int(cur_result.get("curriculumTp", 1 if target_age == "NEULBOM" else 0))
+cur_child_age = cur_result.get("childAge", target_age)
+
+# report API들
 r = safe_request("POST", "/report/parentReport", headers=AUTH_JSON,
-    json_body={"curriculumTp": curriculum_tp, "childAge": target_age, "childId": child_id,
-               "year": 2026, "month": 3, "week": 3, "reportType": "WEEK", "parentTp": "P"})
+    json_body={"curriculumTp": curriculum_tp, "childAge": cur_child_age, "childId": child_id,
+               "year": cur_year, "month": cur_month, "week": cur_week, "reportType": "WEEK", "parentTp": "P"})
 log("위티박스", "POST", "/report/parentReport", r)
 
 r = safe_request("POST", "/report/teacherReport", headers=AUTH_JSON,
-    json_body={"curriculumTp": curriculum_tp, "childAge": target_age, "childId": child_id,
-               "year": 2026, "month": 3, "week": 3, "reportType": "WEEK"})
+    json_body={"curriculumTp": curriculum_tp, "childAge": cur_child_age, "childId": child_id,
+               "year": cur_year, "month": cur_month, "week": cur_week, "reportType": "WEEK"})
 log("위티박스", "POST", "/report/teacherReport", r)
 
 r = safe_request("POST", "/report/teacherActivityReport", headers=AUTH_JSON,
-    json_body={"curriculumTp": curriculum_tp, "childAge": target_age, "childId": child_id,
-               "year": 2026, "month": 3, "week": 3, "reportType": "WEEK"})
+    json_body={"curriculumTp": curriculum_tp, "childAge": cur_child_age, "childId": child_id,
+               "year": cur_year, "month": cur_month, "week": cur_week, "reportType": "WEEK"})
 log("위티박스", "POST", "/report/teacherActivityReport", r)
 
 r = safe_request("POST", "/mission/today/list", headers=AUTH_JSON,
