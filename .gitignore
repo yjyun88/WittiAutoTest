@@ -3,3 +3,7 @@ test_report/
 screen_captures/
 debug_images/
 .mcp.json
+__pycache__/
+build/
+dist/
+.claude/
