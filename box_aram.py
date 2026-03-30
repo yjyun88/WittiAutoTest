@@ -30,13 +30,13 @@ after_tpl = [
 aram_play = Template(r"button_images\aram_play.png", threshold=0.8, resolution=BASE_RESOLUTION)
 
 
-def _build_subject_no_map(content_info):
+def _build_activity_stage_map(content_info):
     result = {}
     for item in content_info or []:
         list_key = str(item.get("list", "")).strip()
         if not list_key.startswith("aramList_"):
             continue
-        result[list_key] = item.get("subjectNo")
+        result[list_key] = item.get("activityStage")
     return result
 
 
@@ -193,7 +193,7 @@ def touch_aramlist_images(
     ])
 
     print(f"총 {len(aramlist_images)}개의 aramList 이미지를 터치 시도합니다.")
-    subject_no_map = _build_subject_no_map(content_info)
+    activity_stage_map = _build_activity_stage_map(content_info)
 
     for img_file in aramlist_images:
         img_path = os.path.join(image_folder_abs, img_file)
@@ -243,9 +243,9 @@ def touch_aramlist_images(
             sleep(10)
 
             item_key = os.path.splitext(img_file)[0].replace(f"{childNm}_", "", 1)
-            subject_no = subject_no_map.get(item_key)
-            print(f"[ARAM] item={item_key} subjectNo={subject_no}")
-            if subject_no == 5 and exists(aram_play):
+            activity_stage = activity_stage_map.get(item_key)
+            print(f"[ARAM] item={item_key} activityStage={activity_stage}")
+            if activity_stage in ("독후활동/평가",) and exists(aram_play):
                 sleep(5)
                 touch_template(aram_play)
                 sleep(5)
