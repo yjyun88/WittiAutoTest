@@ -1178,9 +1178,8 @@ def worker_parent_report_bulk(log_queue, user_id, user_pwd, server, device_label
             server = "api"
 
     import builtins
-    import re
     import traceback
-    from datetime import datetime, date
+    from datetime import datetime
 
     def _print_via_queue(*args, sep=" ", end="\n", **kwargs):
         msg = sep.join(str(a) for a in args) + end
@@ -1204,15 +1203,6 @@ def worker_parent_report_bulk(log_queue, user_id, user_pwd, server, device_label
         classes = class_data.get("result", {}).get("classList", [])
         print(f"[INFO] classes loaded: {len(classes)}")
 
-        # 현재 날짜 기준 year, month, week 계산
-        today = date.today()
-        year = today.year
-        month = today.month
-        # ISO week 기준으로 해당 월의 몇 번째 주인지 계산
-        first_day = today.replace(day=1)
-        first_mon = 1 + (7 - first_day.weekday()) % 7
-        week = max(1, (today.day - first_mon) // 7 + 1)
-
         report_path, wb, ws = init_api_report("parent_report_result", user_id)
 
         total_students = 0
@@ -1225,12 +1215,6 @@ def worker_parent_report_bulk(log_queue, user_id, user_pwd, server, device_label
             target_age = str(cls.get("targetAge", "")).strip()
             if not class_id:
                 continue
-
-            # curriculumTp: targetAge가 NEULBOM이면 1, 아니면 0
-            curriculum_tp = 1 if target_age == "NEULBOM" else 0
-            # childAge: targetAge에서 숫자 추출 (AGE_3 → 3, NEULBOM → 0)
-            _age_match = re.search(r"\d+", target_age)
-            child_age_from_class = int(_age_match.group()) if _age_match else 0
 
             student_resp = student_list_by_class(token, class_id, server)
             if student_resp is None:
@@ -1282,7 +1266,29 @@ def worker_parent_report_bulk(log_queue, user_id, user_pwd, server, device_label
                     style_api_row(ws, ws.max_row, _API_REPORT_HEADERS, False, student_nm, mem_nm)
                     continue
 
-                # Step 2: call parentReport API
+                # Step 2: 커리큘럼 API에서 year, month, week 조회
+                cur_resp = get_curriculum_response(child_auth_token, child_id, server)
+                if cur_resp is not None and cur_resp.ok:
+                    cur_result = cur_resp.json().get("result", {})
+                    year = datetime.now().year
+                    month = cur_result.get("month")
+                    week = cur_result.get("week")
+                    curriculum_tp = int(cur_result.get("curriculumTp", 0))
+                    child_age_from_class = cur_result.get("childAge", 0)
+                else:
+                    fail_count += 1
+                    cur_status = cur_resp.status_code if cur_resp else None
+                    cur_error = cur_resp.text if cur_resp else "curriculum response is None"
+                    ws.append([
+                        tested_at, env_code, class_id, class_nm, target_age,
+                        student_id, student_nm, login_id_used,
+                        cur_status, "FAIL", mem_nm, child_id,
+                        f"curriculum failed: {cur_error}",
+                    ])
+                    style_api_row(ws, ws.max_row, _API_REPORT_HEADERS, False, student_nm, mem_nm)
+                    continue
+
+                # Step 3: call parentReport API
                 try:
                     report_resp = get_parent_report(
                         child_auth_token, child_id, child_age_from_class,
@@ -1350,9 +1356,8 @@ def worker_teacher_activity_report_bulk(log_queue, user_id, user_pwd, server, de
             server = "api"
 
     import builtins
-    import re
     import traceback
-    from datetime import datetime, date
+    from datetime import datetime
 
     def _print_via_queue(*args, sep=" ", end="\n", **kwargs):
         msg = sep.join(str(a) for a in args) + end
@@ -1375,13 +1380,6 @@ def worker_teacher_activity_report_bulk(log_queue, user_id, user_pwd, server, de
         classes = class_resp.json().get("result", {}).get("classList", [])
         print(f"[INFO] classes loaded: {len(classes)}")
 
-        today = date.today()
-        year = today.year
-        month = today.month
-        first_day = today.replace(day=1)
-        first_mon = 1 + (7 - first_day.weekday()) % 7
-        week = max(1, (today.day - first_mon) // 7 + 1)
-
         report_path, wb, ws = init_api_report("teacher_activity_report_result", user_id)
 
         total_students = 0
@@ -1394,10 +1392,6 @@ def worker_teacher_activity_report_bulk(log_queue, user_id, user_pwd, server, de
             target_age = str(cls.get("targetAge", "")).strip()
             if not class_id:
                 continue
-
-            curriculum_tp = 1 if target_age == "NEULBOM" else 0
-            _age_match = re.search(r"\d+", target_age)
-            child_age_from_class = int(_age_match.group()) if _age_match else 0
 
             student_resp = student_list_by_class(token, class_id, server)
             if student_resp is None:
@@ -1436,6 +1430,28 @@ def worker_teacher_activity_report_bulk(log_queue, user_id, user_pwd, server, de
                         access_result.get("status_code"),
                         "FAIL", mem_nm, child_id,
                         access_result.get("error", "") or "study/access failed",
+                    ])
+                    style_api_row(ws, ws.max_row, _API_REPORT_HEADERS, False, student_nm, mem_nm)
+                    continue
+
+                # 커리큘럼 API에서 year, month, week 조회
+                cur_resp = get_curriculum_response(child_auth_token, child_id, server)
+                if cur_resp is not None and cur_resp.ok:
+                    cur_result = cur_resp.json().get("result", {})
+                    year = datetime.now().year
+                    month = cur_result.get("month")
+                    week = cur_result.get("week")
+                    curriculum_tp = int(cur_result.get("curriculumTp", 0))
+                    child_age_from_class = cur_result.get("childAge", 0)
+                else:
+                    fail_count += 1
+                    cur_status = cur_resp.status_code if cur_resp else None
+                    cur_error = cur_resp.text if cur_resp else "curriculum response is None"
+                    ws.append([
+                        tested_at, env_code, class_id, class_nm, target_age,
+                        student_id, student_nm, login_id_used,
+                        cur_status, "FAIL", mem_nm, child_id,
+                        f"curriculum failed: {cur_error}",
                     ])
                     style_api_row(ws, ws.max_row, _API_REPORT_HEADERS, False, student_nm, mem_nm)
                     continue
@@ -1611,15 +1627,22 @@ def worker_all_api_test(log_queue, user_id, user_pwd, server, device_label, step
 
         print(f"[INFO] childToken: {child_token[:20]}..., childId: {child_id}")
 
-        # report용 파라미터
-        curriculum_tp = 1 if target_age == "NEULBOM" else 0
-        _am = _re.search(r"\d+", target_age)
-        child_age_int = int(_am.group()) if _am else 0
-        today = date.today()
-        year, month = today.year, today.month
-        first_day = today.replace(day=1)
-        first_mon = 1 + (7 - first_day.weekday()) % 7
-        week = max(1, (today.day - first_mon) // 7 + 1)
+        # report용 파라미터: 커리큘럼 API에서 조회
+        curriculum_tp = 0
+        child_age_int = 0
+        year, month, week = 0, 0, 0
+
+        cur_resp = get_curriculum_response(child_token, child_id, srv)
+        if cur_resp is not None and cur_resp.ok:
+            cur_result = cur_resp.json().get("result", {})
+            year = date.today().year
+            month = cur_result.get("month", 0)
+            week = cur_result.get("week", 0)
+            curriculum_tp = int(cur_result.get("curriculumTp", 0))
+            child_age_int = cur_result.get("childAge", 0)
+            print(f"[INFO] curriculum: year={year}, month={month}, week={week}")
+        else:
+            print(f"[WARN] curriculum API failed, report APIs may fail")
 
         # ── API 호출 함수 매핑 ──
         # 각 함수는 (display_name, method, path, response) 를 반환

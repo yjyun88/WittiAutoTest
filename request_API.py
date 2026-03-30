@@ -437,7 +437,8 @@ def get_parent_report(authToken, childId, childAge, curriculumTp, year, month, w
         }
 
         response = requests.post(url, headers=headers, json=body, timeout=20)
-        response.raise_for_status()
+        if not response.ok:
+            print(f"[ERROR] 부모 리포트 {response.status_code} body={body} response={response.text[:500]}")
         return response
 
     except requests.exceptions.RequestException as e:
