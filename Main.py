@@ -1501,12 +1501,16 @@ def worker_teacher_activity_report_bulk(log_queue, user_id, user_pwd, server, de
 
 def worker_all_api_test(log_queue, user_id, user_pwd, server, device_label, steps,
                         gui_ctx=None):
-    """단일 계정(첫 번째 학생)으로 steps에 포함된 API를 호출하고 엑셀을 생성한다."""
+    """ALL API 테스트.
+    - GUI에서 학생 선택 시: 그 1명만 테스트
+    - GUI 미선택 시: 선생님(teacherMemId 있을 때) + 전체 학생 테스트
+    매 실행마다 새 파일 (ALL_api_test_{YYMMDD}_{HHMMSS}.xlsx) 생성.
+    파일에는 요약 시트 + 타깃별 시트(memNm) 포함.
+    """
     import builtins
     import traceback
-    import re as _re
     from datetime import datetime, date
-    from openpyxl import Workbook, load_workbook
+    from openpyxl import Workbook
     from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 
     server_label = {"Prod": "Prod", "QA": "QA", "Dev": "Dev"}.get(server, server)
@@ -1527,35 +1531,53 @@ def worker_all_api_test(log_queue, user_id, user_pwd, server, device_label, step
 
     builtins.print = _print_via_queue
 
-    results = []  # (api_name, method, path, status, mark, result_data, error_detail)
+    # 타깃별 누적 저장소
+    results_by_target = {}  # {sheet_label: [(api_name, method, path, status, mark, rd, ed), ...]}
+    target_meta = []  # [{"label", "type", "mem_id", "mem_nm"}, ...]
 
-    def _record(api_name, method, path, resp=None, error=None):
-        if resp is not None:
-            status = resp.status_code
-            ok = resp.ok
-            result_data = resp.text[:1000] if ok else ""
-            error_detail = "" if ok else resp.text[:1000]
-        elif error is not None:
-            status = 0
-            ok = False
-            result_data = ""
-            error_detail = str(error)
-        else:
-            status = 0
-            ok = False
-            result_data = ""
-            error_detail = "unknown"
-        mark = "PASS" if ok else "FAIL"
-        results.append((api_name, method, path, status, mark, result_data, error_detail))
-        print(f"  [{mark}] {method:6s} {path} -> {status} {error_detail[:120]}")
+    def _make_recorder(target_results):
+        def _record(api_name, method, path, resp=None, error=None):
+            if resp is not None:
+                status = resp.status_code
+                ok = resp.ok
+                result_data = resp.text[:1000] if ok else ""
+                error_detail = "" if ok else resp.text[:1000]
+            elif error is not None:
+                status = 0
+                ok = False
+                result_data = ""
+                error_detail = str(error)
+            else:
+                status = 0
+                ok = False
+                result_data = ""
+                error_detail = "unknown"
+            mark = "PASS" if ok else "FAIL"
+            target_results.append((api_name, method, path, status, mark, result_data, error_detail))
+            print(f"  [{mark}] {method:6s} {path} -> {status} {error_detail[:120]}")
+        return _record
 
-    # 공유 컨텍스트 (API 간 데이터 전달용)
-    ctx = {"prod_id": "P0001", "ptnr_id": "1102"}
+    def _register_target(base_label, type_, mem_id, mem_nm, target_results):
+        """시트명 충돌(동명이인) 방지 후 누적 저장소에 등록."""
+        sheet_label = base_label or "unnamed"
+        n = 2
+        existing = {m["label"] for m in target_meta}
+        while sheet_label in existing:
+            sheet_label = f"{base_label}_{n}"
+            n += 1
+        target_meta.append({
+            "label": sheet_label,
+            "type": type_,
+            "mem_id": mem_id,
+            "mem_nm": mem_nm,
+        })
+        results_by_target[sheet_label] = target_results
+        return sheet_label
 
     try:
-        print(f"[INFO] ALL API test started ({len(steps)}개)")
+        print(f"[INFO] ALL API test started ({len(steps)}개 steps)")
 
-        # ── 로그인 & 반 정보 (공통 전처리) ──
+        # ── 로그인 & 반 정보 ──
         token = login_step1(user_id, user_pwd, srv)
         if not token:
             print("[ERROR] login failed.")
@@ -1573,173 +1595,234 @@ def worker_all_api_test(log_queue, user_id, user_pwd, server, device_label, step
 
         first_class = classes[0]
         class_id = str(first_class.get("classId", ""))
+        class_nm = str(first_class.get("classNm", ""))
         target_age = str(first_class.get("targetAge", ""))
-        print(f"[INFO] class: {first_class.get('classNm')} ({class_id})")
+
+        _gui = gui_ctx or {}
+        if _gui.get("class_id"):
+            class_id = _gui.get("class_id") or class_id
+            class_nm = _gui.get("class_nm") or class_nm
+            target_age = _gui.get("target_age") or target_age
+        print(f"[INFO] class: {class_nm} ({class_id})")
 
         stu_resp = student_list_by_class(token, class_id, srv)
         if stu_resp is None:
             print("[ERROR] student list failed.")
             return
 
-        students = stu_resp.json().get("result", {}).get("studentList", [])
-        if not students:
-            print("[ERROR] no students found.")
-            return
+        stu_result = stu_resp.json().get("result", {})
+        students_raw = stu_result.get("studentList", [])
+        teacher_mem_id = str(stu_result.get("teacherMemId", "")).strip()
+        teacher_mem_nm = str(
+            stu_result.get("teacherMemNm")
+            or stu_result.get("teacherNm")
+            or stu_result.get("memNm")
+            or ""
+        ).strip()
 
-        first_stu = students[0]
-        student_id = str(first_stu.get("studentId", ""))
-        print(f"[INFO] student: {first_stu.get('studentNm')} ({student_id})")
+        # ── 타깃 결정 ──
+        targets = []  # [{"type", "studentId", "studentNm", "loginId", "preset_token"?, "preset_child_id"?}]
+        # 주의: _gui.get(key, "")는 키가 있고 값이 None이면 None을 반환 → str(None)="None"이 truthy로 처리되는 버그 있음
+        # 따라서 `or ""` 패턴으로 None을 빈 문자열로 정규화
+        gui_student_id = str(_gui.get("student_id") or "").strip()
 
-        # GUI에서 선택된 class/student 정보 반영
-        _gui = gui_ctx or {}
-        if _gui.get("class_nm"):
-            first_class = {"classNm": _gui["class_nm"], "classId": _gui.get("class_id", ""), "targetAge": _gui.get("target_age", "")}
-            class_id = _gui.get("class_id") or class_id
-            target_age = _gui.get("target_age") or target_age
-        if _gui.get("student_nm"):
-            first_stu = {"studentNm": _gui["student_nm"], "studentId": _gui.get("student_id", "")}
-            student_id = _gui.get("student_id") or student_id
-
-        # study/access (child token 획득)
-        print("\n=== 수업시작 (study/access) ===")
-        try:
-            access_result = authenticate_study_access_detailed(student_id, user_id, srv)
-            access_data = access_result.get("data") if isinstance(access_result, dict) else None
-            if not isinstance(access_data, dict):
-                access_data = {}
-            api_res = access_data.get("result", {}) if isinstance(access_data.get("result", {}), dict) else {}
-
-            child_token = _gui.get("auth_token") or str(api_res.get("authToken", "")).strip()
-            child_id = _gui.get("mem_id") or str(api_res.get("memId", "")).strip()
-
-            if child_token:
-                _record("수업시작", "POST", "/authenticate/study/access",
-                        resp=type("R", (), {"status_code": 200, "ok": True, "text": str(access_data)[:1000]})())
-            else:
-                _record("수업시작", "POST", "/authenticate/study/access",
-                        error="no child token in response")
-                print("[ERROR] study/access failed. no child token.")
-                return
-        except Exception as e:
-            _record("수업시작", "POST", "/authenticate/study/access", error=e)
-            print(f"[ERROR] study/access exception: {e!r}")
-            return
-
-        print(f"[INFO] childToken: {child_token[:20]}..., childId: {child_id}")
-
-        # report용 파라미터: 커리큘럼 API에서 조회
-        curriculum_tp = 0
-        child_age_int = 0
-        year, month, week = 0, 0, 0
-
-        cur_resp = get_curriculum_response(child_token, child_id, srv)
-        if cur_resp is not None and cur_resp.ok:
-            cur_result = cur_resp.json().get("result", {})
-            year = date.today().year
-            month = cur_result.get("month", 0)
-            week = cur_result.get("week", 0)
-            curriculum_tp = int(cur_result.get("curriculumTp", 0))
-            child_age_int = cur_result.get("childAge", 0)
-            print(f"[INFO] curriculum: year={year}, month={month}, week={week}")
+        if gui_student_id:
+            # GUI 선택 시: 1명만 (현행 동작 유지)
+            targets.append({
+                "type": "선택",
+                "studentId": gui_student_id,
+                "studentNm": _gui.get("student_nm", "") or "선택",
+                "loginId": user_id,
+                "preset_token": _gui.get("auth_token") or "",
+                "preset_child_id": _gui.get("mem_id") or "",
+            })
         else:
-            print(f"[WARN] curriculum API failed, report APIs may fail")
+            # 미선택 시: 선생님(있으면) + 전체 학생 (가나다순)
+            if teacher_mem_id:
+                targets.append({
+                    "type": "선생님",
+                    "studentId": teacher_mem_id,
+                    "studentNm": teacher_mem_nm or "선생님",
+                    "loginId": user_id,
+                })
+            sorted_students = sorted(
+                students_raw,
+                key=lambda s: str(s.get("studentNm", "")).strip(),
+            )
+            for s in sorted_students:
+                sid = str(s.get("studentId", "")).strip()
+                if not sid:
+                    continue
+                lid = str(
+                    s.get("loginId")
+                    or s.get("studentLoginId")
+                    or user_id
+                ).strip()
+                targets.append({
+                    "type": "학생",
+                    "studentId": sid,
+                    "studentNm": str(s.get("studentNm", "")).strip() or "-",
+                    "loginId": lid,
+                })
 
-        # ── API 호출 함수 매핑 ──
-        # 각 함수는 (display_name, method, path, response) 를 반환
-        def _call_curriculum():
-            resp = get_curriculum_response(child_token, child_id, srv)
-            return ("커리큘럼 조회", "GET", "/witti-box/curriculum", resp)
+        if not targets:
+            print("[ERROR] no targets to test")
+            return
 
-        def _call_attendance_curriculum():
-            resp = post_attendance_curriculum(child_token, srv)
-            return ("출석 시간 전송", "POST", "/witti-app/attendance/curriculum", resp)
+        n_teacher = sum(1 for t in targets if t["type"] == "선생님")
+        n_student = sum(1 for t in targets if t["type"] in ("학생", "선택"))
+        print(f"[INFO] 총 {len(targets)}개 타깃 (선생님: {n_teacher}, 학생/선택: {n_student})")
 
-        def _call_witti_school_main():
-            resp = get_witti_school_main(child_token, srv)
-            # prodId, ptnrId 추출하여 ctx에 저장
-            if resp is not None and resp.ok:
-                sm = resp.json().get("result", {})
-                pl = sm.get("prodList") or sm.get("productList") or []
-                if pl:
-                    ctx["prod_id"] = pl[0].get("prodId", ctx["prod_id"])
-                    ctx["ptnr_id"] = str(pl[0].get("ptnrId", ctx["ptnr_id"]))
-            return ("위티스쿨 메인", "GET", "/witti-school/main", resp)
+        # ── 타깃별 실행 루프 ──
+        for ti, tgt in enumerate(targets, 1):
+            print(f"\n{'='*60}")
+            print(f"[{ti}/{len(targets)}] {tgt['type']}: {tgt['studentNm']} (studentId={tgt['studentId']})")
+            print(f"{'='*60}")
 
-        def _call_aram_bookworld_subject():
-            resp = get_aram_bookworld_subject(child_token, ctx["ptnr_id"], ctx["prod_id"], srv)
-            return ("아람북월드 과목", "GET", "/witti-school/aram-bookworld/subject", resp)
+            target_results = []
+            _record = _make_recorder(target_results)
+            ctx = {"prod_id": "P0001", "ptnr_id": "1102"}
 
-        def _call_ebook_main():
-            resp = get_witti_school_ebook_main(child_token, srv)
-            return ("도서관 메인", "GET", "/witti-school/e-book/main", resp)
+            # study/access (GUI preset 있으면 재사용, 없으면 호출)
+            child_token = ""
+            child_id = ""
+            mem_nm_resp = ""
+            if tgt.get("preset_token") and tgt.get("preset_child_id"):
+                child_token = tgt["preset_token"]
+                child_id = tgt["preset_child_id"]
+                mem_nm_resp = tgt["studentNm"]
+                _record("수업시작", "POST", "/authenticate/study/access",
+                        resp=type("R", (), {"status_code": 200, "ok": True, "text": "(GUI preset)"})())
+            else:
+                try:
+                    access_result = authenticate_study_access_detailed(
+                        tgt["studentId"], tgt["loginId"], srv
+                    )
+                    access_data = access_result.get("data") if isinstance(access_result, dict) else None
+                    if not isinstance(access_data, dict):
+                        access_data = {}
+                    api_res = access_data.get("result", {}) if isinstance(access_data.get("result", {}), dict) else {}
 
-        def _call_tv_main():
-            resp = get_tv_main(child_token, srv)
-            return ("위티TV 메인", "GET", "/tv/main", resp)
+                    child_token = str(api_res.get("authToken", "")).strip()
+                    child_id = str(api_res.get("memId", "")).strip()
+                    mem_nm_resp = str(api_res.get("memNm", "")).strip() or tgt["studentNm"]
 
-        def _call_teacher_activity_report():
-            resp = get_teacher_activity_report(child_token, child_id, child_age_int, curriculum_tp, year, month, week, srv)
-            return ("선생님 활동현황", "POST", "/report/teacherActivityReport", resp)
+                    if child_token and child_id:
+                        _record("수업시작", "POST", "/authenticate/study/access",
+                                resp=type("R", (), {"status_code": 200, "ok": True, "text": str(access_data)[:1000]})())
+                    else:
+                        _record("수업시작", "POST", "/authenticate/study/access",
+                                error="no child token/id in response")
+                        # study/access 실패 → 이 타깃은 결과만 기록하고 다음 타깃
+                        _register_target(tgt["studentNm"], tgt["type"],
+                                         tgt["studentId"], tgt["studentNm"], target_results)
+                        continue
+                except Exception as e:
+                    _record("수업시작", "POST", "/authenticate/study/access", error=e)
+                    _register_target(tgt["studentNm"], tgt["type"],
+                                     tgt["studentId"], tgt["studentNm"], target_results)
+                    continue
 
-        def _call_parent_report():
-            resp = get_parent_report(child_token, child_id, child_age_int, curriculum_tp, year, month, week, srv)
-            return ("학습 리포트", "POST", "/report/parentReport", resp)
+            print(f"  childToken: {child_token[:20]}..., childId: {child_id}, memNm: {mem_nm_resp}")
 
-        # step 이름 → 호출 함수 매핑 (새 API 추가 시 여기만 추가)
-        CALL_MAP = {
-            "커리큘럼 조회 (curriculum)": _call_curriculum,
-            "출석 시간 전송 (attendance/curriculum)": _call_attendance_curriculum,
-            "위티스쿨 메인 (witti-school/main)": _call_witti_school_main,
-            "아람북월드 과목 (aram-bookworld/subject)": _call_aram_bookworld_subject,
-            "도서관 메인 (e-book/main)": _call_ebook_main,
-            "위티TV 메인 (tv/main)": _call_tv_main,
-            "선생님 활동현황 (report/teacherActivityReport)": _call_teacher_activity_report,
-            "학습 리포트 > 부모(학생) / 주간 (report/parentReport)": _call_parent_report,
-        }
+            # report용 파라미터
+            curriculum_tp = 0
+            child_age_int = 0
+            year, month, week = 0, 0, 0
+            cur_resp = get_curriculum_response(child_token, child_id, srv)
+            if cur_resp is not None and cur_resp.ok:
+                cur_result = cur_resp.json().get("result", {})
+                year = date.today().year
+                month = cur_result.get("month", 0)
+                week = cur_result.get("week", 0)
+                curriculum_tp = int(cur_result.get("curriculumTp", 0))
+                child_age_int = cur_result.get("childAge", 0)
 
-        # ── steps 순회하며 API 호출 ──
-        for step_name in steps:
-            if step_name == "수업시작 (study/access)":
-                continue  # 이미 위에서 처리됨
+            # API 호출 함수 매핑 (타깃 컨텍스트에 종속 → 매 타깃마다 새 정의)
+            def _call_curriculum():
+                resp = get_curriculum_response(child_token, child_id, srv)
+                return ("커리큘럼 조회", "GET", "/witti-box/curriculum", resp)
 
-            call_fn = CALL_MAP.get(step_name)
-            if call_fn is None:
-                print(f"[WARN] ALL 매핑에 없는 API: {step_name}, skip")
-                continue
+            def _call_attendance_curriculum():
+                resp = post_attendance_curriculum(child_token, srv)
+                return ("출석 시간 전송", "POST", "/witti-app/attendance/curriculum", resp)
 
-            print(f"\n=== {step_name} ===")
-            try:
-                display_name, method, path, resp = call_fn()
-                if resp is not None:
-                    _record(display_name, method, path, resp=resp)
-                else:
-                    _record(display_name, method, path, error="API returned None")
-            except Exception as e:
-                # call_fn 내부에서 display_name을 알 수 없으므로 step_name 사용
-                _record(step_name, "?", "?", error=e)
+            def _call_witti_school_main():
+                resp = get_witti_school_main(child_token, srv)
+                if resp is not None and resp.ok:
+                    sm = resp.json().get("result", {})
+                    pl = sm.get("prodList") or sm.get("productList") or []
+                    if pl:
+                        ctx["prod_id"] = pl[0].get("prodId", ctx["prod_id"])
+                        ctx["ptnr_id"] = str(pl[0].get("ptnrId", ctx["ptnr_id"]))
+                return ("위티스쿨 메인", "GET", "/witti-school/main", resp)
 
-        # ── 결과 요약 ──
-        pass_count = sum(1 for r in results if r[4] == "PASS")
-        fail_count = sum(1 for r in results if r[4] == "FAIL")
-        print(f"\n총 {len(results)}개 API | PASS: {pass_count} | FAIL: {fail_count}")
+            def _call_aram_bookworld_subject():
+                resp = get_aram_bookworld_subject(child_token, ctx["ptnr_id"], ctx["prod_id"], srv)
+                return ("아람북월드 과목", "GET", "/witti-school/aram-bookworld/subject", resp)
 
-        # ── 엑셀 저장 ──
+            def _call_ebook_main():
+                resp = get_witti_school_ebook_main(child_token, srv)
+                return ("도서관 메인", "GET", "/witti-school/e-book/main", resp)
+
+            def _call_tv_main():
+                resp = get_tv_main(child_token, srv)
+                return ("위티TV 메인", "GET", "/tv/main", resp)
+
+            def _call_teacher_activity_report():
+                resp = get_teacher_activity_report(child_token, child_id, child_age_int, curriculum_tp, year, month, week, srv)
+                return ("선생님 활동현황", "POST", "/report/teacherActivityReport", resp)
+
+            def _call_parent_report():
+                resp = get_parent_report(child_token, child_id, child_age_int, curriculum_tp, year, month, week, srv)
+                return ("학습 리포트", "POST", "/report/parentReport", resp)
+
+            CALL_MAP = {
+                "커리큘럼 조회 (curriculum)": _call_curriculum,
+                "출석 시간 전송 (attendance/curriculum)": _call_attendance_curriculum,
+                "위티스쿨 메인 (witti-school/main)": _call_witti_school_main,
+                "아람북월드 과목 (aram-bookworld/subject)": _call_aram_bookworld_subject,
+                "도서관 메인 (e-book/main)": _call_ebook_main,
+                "위티TV 메인 (tv/main)": _call_tv_main,
+                "선생님 활동현황 (report/teacherActivityReport)": _call_teacher_activity_report,
+                "학습 리포트 > 부모(학생) / 주간 (report/parentReport)": _call_parent_report,
+            }
+
+            for step_name in steps:
+                if step_name == "수업시작 (study/access)":
+                    continue
+                call_fn = CALL_MAP.get(step_name)
+                if call_fn is None:
+                    print(f"[WARN] ALL 매핑에 없는 API: {step_name}, skip")
+                    continue
+                print(f"\n--- {step_name} ---")
+                try:
+                    display_name, method, path, resp = call_fn()
+                    if resp is not None:
+                        _record(display_name, method, path, resp=resp)
+                    else:
+                        _record(display_name, method, path, error="API returned None")
+                except Exception as e:
+                    _record(step_name, "?", "?", error=e)
+
+            base_label = mem_nm_resp or tgt["studentNm"] or "unnamed"
+            _register_target(base_label, tgt["type"],
+                             child_id or tgt["studentId"], mem_nm_resp or tgt["studentNm"],
+                             target_results)
+
+            t_pass = sum(1 for r in target_results if r[4] == "PASS")
+            t_fail = sum(1 for r in target_results if r[4] == "FAIL")
+            print(f"\n[{tgt['studentNm']}] 총 {len(target_results)}개 | PASS: {t_pass} | FAIL: {t_fail}")
+
+        # ── 엑셀 저장 (매 실행 새 파일) ──
         date_str = datetime.now().strftime("%y%m%d")
+        time_str = datetime.now().strftime("%H%M%S")
         report_dir = os.path.join(os.getcwd(), "test_report", "api_test")
         os.makedirs(report_dir, exist_ok=True)
-        file_path = os.path.join(report_dir, f"ALL_api_test_{date_str}.xlsx")
+        file_path = os.path.join(report_dir, f"ALL_api_test_{date_str}_{time_str}.xlsx")
 
-        if os.path.exists(file_path):
-            wb = load_workbook(file_path)
-        else:
-            wb = Workbook()
-            wb.remove(wb.active)
-
-        time_str = datetime.now().strftime("%H-%M-%S")
-        sheet_name = f"{user_id}_{time_str}"[:31]
-        if sheet_name in wb.sheetnames:
-            del wb[sheet_name]
-        ws = wb.create_sheet(title=sheet_name)
+        wb = Workbook()
+        wb.remove(wb.active)
 
         # 스타일
         header_font = Font(name="맑은 고딕", bold=True, size=11, color="FFFFFF")
@@ -1747,93 +1830,235 @@ def worker_all_api_test(log_queue, user_id, user_pwd, server, device_label, step
         header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
         cell_font = Font(name="맑은 고딕", size=10)
         center_align = Alignment(horizontal="center", vertical="center")
+        left_align = Alignment(horizontal="left", vertical="center")
         cell_align = Alignment(vertical="center", wrap_text=True)
         pass_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
         fail_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
         pass_font = Font(name="맑은 고딕", size=10, color="006100", bold=True)
         fail_font = Font(name="맑은 고딕", size=10, color="9C0006", bold=True)
+        link_font = Font(name="맑은 고딕", size=10, color="0563C1", underline="single")
         thin_border = Border(
             left=Side(style="thin"), right=Side(style="thin"),
             top=Side(style="thin"), bottom=Side(style="thin"),
         )
 
-        # 요약 행
-        ws.merge_cells("A1:I1")
-        sc = ws["A1"]
-        class_nm = first_class.get("classNm", "")
-        student_nm = first_stu.get("studentNm", "")
+        # 정렬: 선생님 우선 + 학생 가나다순
+        sorted_meta = sorted(
+            target_meta,
+            key=lambda m: (0 if m["type"] == "선생님" else 1, m["mem_nm"]),
+        )
+
+        # ── 요약 시트 ──
+        ws_sum = wb.create_sheet(title="요약")
+        total_targets = len(sorted_meta)
+        total_pass = sum(sum(1 for r in v if r[4] == "PASS") for v in results_by_target.values())
+        total_fail = sum(sum(1 for r in v if r[4] == "FAIL") for v in results_by_target.values())
+        total_apis = total_pass + total_fail
+
+        ws_sum.merge_cells("A1:H1")
+        sc = ws_sum["A1"]
         sc.value = (
-            f"API 테스트 결과 — {datetime.now().strftime('%Y-%m-%d %H:%M')}  |  "
+            f"API 테스트 결과 — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  |  "
             f"서버: {server_label}  |  계정: {user_id}  |  "
-            f"반: {class_nm} ({class_id})  |  학생: {student_nm} ({student_id})  |  "
-            f"총 {len(results)}개  |  PASS: {pass_count}  |  FAIL: {fail_count}"
+            f"반: {class_nm} ({class_id})  |  "
+            f"총 대상: {total_targets}명  |  "
+            f"총 API: {total_apis}개  |  PASS: {total_pass}  |  FAIL: {total_fail}"
         )
         sc.font = Font(name="맑은 고딕", bold=True, size=12)
         sc.alignment = Alignment(vertical="center")
-        ws.row_dimensions[1].height = 30
+        ws_sum.row_dimensions[1].height = 30
 
-        # 헤더
-        col_headers = ["No.", "서버", "카테고리", "Method", "API Path", "Status", "결과", "Result Data", "에러 상세"]
-        ws.append([])
-        for ci, h in enumerate(col_headers, 1):
-            c = ws.cell(row=3, column=ci, value=h)
+        ws_sum.append([])
+        sum_headers = ["No.", "대상명", "종류", "memId", "총 API", "PASS", "FAIL", "성공률"]
+        for ci, h in enumerate(sum_headers, 1):
+            c = ws_sum.cell(row=3, column=ci, value=h)
             c.font = header_font
             c.fill = header_fill
             c.alignment = header_align
             c.border = thin_border
-        ws.row_dimensions[3].height = 25
+        ws_sum.row_dimensions[3].height = 25
 
-        # 데이터
-        for i, (tag, method, path, status, mark, rd, ed) in enumerate(results, 1):
+        # 시트명 → 31자 자른 형태 미리 계산 (하이퍼링크용)
+        sheet_name_map = {}  # label → actual sheet name
+        used_names = {"요약"}
+        for meta in sorted_meta:
+            base = meta["label"][:31]
+            sname = base
+            if sname in used_names:
+                trim = base[:28]
+                k = 2
+                while f"{trim}_{k}" in used_names:
+                    k += 1
+                sname = f"{trim}_{k}"
+            sheet_name_map[meta["label"]] = sname
+            used_names.add(sname)
+
+        for i, meta in enumerate(sorted_meta, 1):
             row = i + 3
-            vals = [i, server_label, tag, method, path, status if status else "", mark, rd, ed]
+            tr = results_by_target.get(meta["label"], [])
+            t_pass = sum(1 for r in tr if r[4] == "PASS")
+            t_fail = sum(1 for r in tr if r[4] == "FAIL")
+            t_total = t_pass + t_fail
+            rate = f"{(t_pass / t_total * 100):.1f}%" if t_total else "-"
+
+            vals = [i, meta["mem_nm"], meta["type"], meta["mem_id"], t_total, t_pass, t_fail, rate]
             for ci, v in enumerate(vals, 1):
-                c = ws.cell(row=row, column=ci, value=v)
+                c = ws_sum.cell(row=row, column=ci, value=v)
                 c.font = cell_font
                 c.border = thin_border
-                c.alignment = center_align if ci in (1, 2, 4, 6, 7) else cell_align
+                c.alignment = left_align if ci == 2 else center_align
 
-            rc = ws.cell(row=row, column=7)
-            if mark == "PASS":
-                rc.fill = pass_fill
-                rc.font = pass_font
+            # 대상명 셀 → 해당 시트로 하이퍼링크
+            link_cell = ws_sum.cell(row=row, column=2)
+            link_cell.hyperlink = f"#'{sheet_name_map[meta['label']]}'!A1"
+            link_cell.font = link_font
+
+            # FAIL 셀 강조
+            fail_cell = ws_sum.cell(row=row, column=7)
+            if t_fail > 0:
+                fail_cell.fill = fail_fill
+                fail_cell.font = fail_font
             else:
-                rc.fill = fail_fill
-                rc.font = fail_font
+                fail_cell.fill = pass_fill
 
-        # 카테고리 배경색 교대
-        tag_colors = {}
-        color_toggle = ["F2F7FB", "FFFFFF"]
-        cidx = 0
-        prev_tag = None
-        for i, (tag, *_) in enumerate(results):
-            if tag != prev_tag:
-                if tag not in tag_colors:
-                    tag_colors[tag] = color_toggle[cidx % 2]
-                    cidx += 1
-                prev_tag = tag
-            row = i + 4
-            bg = PatternFill(start_color=tag_colors[tag], end_color=tag_colors[tag], fill_type="solid")
-            for col in range(1, 8):
-                c = ws.cell(row=row, column=col)
-                if col != 7:
-                    c.fill = bg
+        # API별 실패 패턴 섹션
+        api_fail_count = {}  # (method, path) → set of labels
+        for label, rs in results_by_target.items():
+            for (api_name, method, path, status, mark, rd, ed) in rs:
+                key = (method, path)
+                if key not in api_fail_count:
+                    api_fail_count[key] = set()
+                if mark == "FAIL":
+                    api_fail_count[key].add(label)
 
-        ws.column_dimensions["A"].width = 6
-        ws.column_dimensions["B"].width = 9
-        ws.column_dimensions["C"].width = 16
-        ws.column_dimensions["D"].width = 9
-        ws.column_dimensions["E"].width = 48
-        ws.column_dimensions["F"].width = 9
-        ws.column_dimensions["G"].width = 9
-        ws.column_dimensions["H"].width = 60
-        ws.column_dimensions["I"].width = 60
+        fail_apis = [(m, p, len(s)) for (m, p), s in api_fail_count.items() if s]
+        fail_apis.sort(key=lambda x: -x[2])
 
-        ws.auto_filter.ref = f"A3:I{len(results) + 3}"
-        ws.freeze_panes = "A4"
+        if fail_apis:
+            section_row = len(sorted_meta) + 5
+            ws_sum.merge_cells(start_row=section_row, start_column=1,
+                               end_row=section_row, end_column=8)
+            sc2 = ws_sum.cell(row=section_row, column=1,
+                              value="API별 실패 패턴 (1회 이상 FAIL)")
+            sc2.font = Font(name="맑은 고딕", bold=True, size=11)
+            sc2.alignment = Alignment(vertical="center")
+            ws_sum.row_dimensions[section_row].height = 25
+
+            api_headers = ["Method", "API Path", "FAIL 대상 수"]
+            for ci, h in enumerate(api_headers, 1):
+                c = ws_sum.cell(row=section_row + 1, column=ci, value=h)
+                c.font = header_font
+                c.fill = header_fill
+                c.alignment = header_align
+                c.border = thin_border
+            ws_sum.row_dimensions[section_row + 1].height = 25
+
+            for i, (method, path, fail_n) in enumerate(fail_apis, 1):
+                row = section_row + 1 + i
+                vals = [method, path, f"{fail_n}/{total_targets}"]
+                for ci, v in enumerate(vals, 1):
+                    c = ws_sum.cell(row=row, column=ci, value=v)
+                    c.font = cell_font
+                    c.border = thin_border
+                    c.alignment = left_align if ci == 2 else center_align
+                # 모든 대상에서 실패 → 빨간 강조 (환경 이슈 의심)
+                if fail_n == total_targets:
+                    for ci in range(1, 4):
+                        ws_sum.cell(row=row, column=ci).fill = fail_fill
+
+        ws_sum.column_dimensions["A"].width = 6
+        ws_sum.column_dimensions["B"].width = 24
+        ws_sum.column_dimensions["C"].width = 10
+        ws_sum.column_dimensions["D"].width = 14
+        ws_sum.column_dimensions["E"].width = 10
+        ws_sum.column_dimensions["F"].width = 10
+        ws_sum.column_dimensions["G"].width = 10
+        ws_sum.column_dimensions["H"].width = 10
+        ws_sum.freeze_panes = "A4"
+
+        # ── 타깃별 시트 ──
+        for meta in sorted_meta:
+            label = meta["label"]
+            results = results_by_target.get(label, [])
+            sheet_name = sheet_name_map[label]
+            ws = wb.create_sheet(title=sheet_name)
+
+            t_pass = sum(1 for r in results if r[4] == "PASS")
+            t_fail = sum(1 for r in results if r[4] == "FAIL")
+
+            ws.merge_cells("A1:I1")
+            sc = ws["A1"]
+            sc.value = (
+                f"{meta['type']}: {meta['mem_nm']} (memId={meta['mem_id']})  |  "
+                f"서버: {server_label}  |  계정: {user_id}  |  "
+                f"반: {class_nm} ({class_id})  |  "
+                f"총 {len(results)}개  |  PASS: {t_pass}  |  FAIL: {t_fail}"
+            )
+            sc.font = Font(name="맑은 고딕", bold=True, size=12)
+            sc.alignment = Alignment(vertical="center")
+            ws.row_dimensions[1].height = 30
+
+            col_headers = ["No.", "서버", "카테고리", "Method", "API Path", "Status", "결과", "Result Data", "에러 상세"]
+            ws.append([])
+            for ci, h in enumerate(col_headers, 1):
+                c = ws.cell(row=3, column=ci, value=h)
+                c.font = header_font
+                c.fill = header_fill
+                c.alignment = header_align
+                c.border = thin_border
+            ws.row_dimensions[3].height = 25
+
+            for i, (tag, method, path, status, mark, rd, ed) in enumerate(results, 1):
+                row = i + 3
+                vals = [i, server_label, tag, method, path, status if status else "", mark, rd, ed]
+                for ci, v in enumerate(vals, 1):
+                    c = ws.cell(row=row, column=ci, value=v)
+                    c.font = cell_font
+                    c.border = thin_border
+                    c.alignment = center_align if ci in (1, 2, 4, 6, 7) else cell_align
+
+                rc = ws.cell(row=row, column=7)
+                if mark == "PASS":
+                    rc.fill = pass_fill
+                    rc.font = pass_font
+                else:
+                    rc.fill = fail_fill
+                    rc.font = fail_font
+
+            tag_colors = {}
+            color_toggle = ["F2F7FB", "FFFFFF"]
+            cidx = 0
+            prev_tag = None
+            for i, (tag, *_) in enumerate(results):
+                if tag != prev_tag:
+                    if tag not in tag_colors:
+                        tag_colors[tag] = color_toggle[cidx % 2]
+                        cidx += 1
+                    prev_tag = tag
+                row = i + 4
+                bg = PatternFill(start_color=tag_colors[tag], end_color=tag_colors[tag], fill_type="solid")
+                for col in range(1, 8):
+                    c = ws.cell(row=row, column=col)
+                    if col != 7:
+                        c.fill = bg
+
+            ws.column_dimensions["A"].width = 6
+            ws.column_dimensions["B"].width = 9
+            ws.column_dimensions["C"].width = 16
+            ws.column_dimensions["D"].width = 9
+            ws.column_dimensions["E"].width = 48
+            ws.column_dimensions["F"].width = 9
+            ws.column_dimensions["G"].width = 9
+            ws.column_dimensions["H"].width = 60
+            ws.column_dimensions["I"].width = 60
+
+            if results:
+                ws.auto_filter.ref = f"A3:I{len(results) + 3}"
+            ws.freeze_panes = "A4"
 
         wb.save(file_path)
-        print(f"[INFO] 엑셀 저장 완료: {file_path} (탭: {sheet_name})")
+        print(f"\n[INFO] 엑셀 저장 완료: {file_path}")
+        print(f"[INFO] 요약 시트 1개 + 타깃 시트 {len(sorted_meta)}개")
 
     except Exception as e:
         print(f"[ERROR] ALL API test exception: {e!r}")
@@ -2111,13 +2336,37 @@ class MainApp(QtWidgets.QMainWindow):
 
         try:
             data = response.json()
-            students = data.get("result", {}).get("studentList", [])
+            result = data.get("result", {})
+            students = result.get("studentList", [])
+            teacher_mem_id = str(result.get("teacherMemId", "")).strip()
+            teacher_mem_nm = str(
+                result.get("teacherMemNm")
+                or result.get("teacherNm")
+                or result.get("memNm")
+                or ""
+            ).strip()
             students = sorted(
                 students,
                 key=lambda s: str(s.get("studentNm", "")).strip(),
             )
 
             self.student_list_model.clear()
+
+            # teacherMemId가 있으면 맨 위에 "선생님(memNm)" 항목 추가
+            if teacher_mem_id:
+                teacher_label = f"선생님({teacher_mem_nm})" if teacher_mem_nm else "선생님"
+                teacher_login_id = self.ui.lineEdit.text().strip()
+                teacher_data = {
+                    "studentNm": teacher_label,
+                    "studentId": teacher_mem_id,
+                    "loginId": teacher_login_id,
+                    "isTeacher": True,
+                }
+                t_item = QtGui.QStandardItem(teacher_label)
+                t_item.setData(teacher_mem_id, QtCore.Qt.UserRole)
+                t_item.setData(teacher_data, QtCore.Qt.UserRole + 1)
+                self.student_list_model.appendRow(t_item)
+
             for student in students:
                 student_nm = str(student.get("studentNm", "")).strip() or "-"
                 student_id = str(student.get("studentId", "")).strip()
@@ -2126,7 +2375,10 @@ class MainApp(QtWidgets.QMainWindow):
                 item.setData(student, QtCore.Qt.UserRole + 1)
                 self.student_list_model.appendRow(item)
 
-            self.logger.info(f"Student List {len(students)}건 로드 완료 (classId={class_id})")
+            self.logger.info(
+                f"Student List {len(students)}건 로드 완료 "
+                f"(classId={class_id}, teacherMemId={teacher_mem_id or '없음'})"
+            )
         except Exception as e:
             self.logger.error(f"Student List 파싱 실패: {e!r}")
 
