@@ -1246,6 +1246,16 @@ def worker_parent_report_bulk(log_queue, user_id, user_pwd, server, device_label
                 child_id = str(access_api_result.get("memId", "")).strip()
                 mem_nm = str(access_api_result.get("memNm", "")).strip()
 
+                # childList에서 해당 계정의 childAge 추출
+                _child_list = access_api_result.get("childList") or []
+                _access_child_age = None
+                for _ch in _child_list:
+                    if str(_ch.get("childId", "")) == child_id:
+                        _access_child_age = _ch.get("childAge")
+                        break
+                if _access_child_age is None and _child_list:
+                    _access_child_age = _child_list[0].get("childAge")
+
                 if not access_result.get("ok") or not child_auth_token or not child_id:
                     fail_count += 1
                     ws.append([
@@ -1266,6 +1276,10 @@ def worker_parent_report_bulk(log_queue, user_id, user_pwd, server, device_label
                     style_api_row(ws, ws.max_row, _API_REPORT_HEADERS, False, student_nm, mem_nm)
                     continue
 
+                # childAge=0(늘봄)이면 curriculumTp=1, 아니면 0
+                child_age_from_class = int(_access_child_age) if _access_child_age is not None else 0
+                curriculum_tp = 1 if child_age_from_class == 0 else 0
+
                 # Step 2: 커리큘럼 API에서 year, month, week 조회
                 cur_resp = get_curriculum_response(child_auth_token, child_id, server)
                 if cur_resp is not None and cur_resp.ok:
@@ -1273,8 +1287,8 @@ def worker_parent_report_bulk(log_queue, user_id, user_pwd, server, device_label
                     year = datetime.now().year
                     month = cur_result.get("month")
                     week = cur_result.get("week")
-                    curriculum_tp = int(cur_result.get("curriculumTp", 0))
-                    child_age_from_class = cur_result.get("childAge", 0)
+                    if child_age_from_class != 0:
+                        child_age_from_class = cur_result.get("childAge", child_age_from_class)
                 else:
                     fail_count += 1
                     cur_status = cur_resp.status_code if cur_resp else None
@@ -1422,6 +1436,16 @@ def worker_teacher_activity_report_bulk(log_queue, user_id, user_pwd, server, de
                 child_id = str(access_api_result.get("memId", "")).strip()
                 mem_nm = str(access_api_result.get("memNm", "")).strip()
 
+                # childList에서 해당 계정의 childAge 추출
+                _child_list = access_api_result.get("childList") or []
+                _access_child_age = None
+                for _ch in _child_list:
+                    if str(_ch.get("childId", "")) == child_id:
+                        _access_child_age = _ch.get("childAge")
+                        break
+                if _access_child_age is None and _child_list:
+                    _access_child_age = _child_list[0].get("childAge")
+
                 if not access_result.get("ok") or not child_auth_token or not child_id:
                     fail_count += 1
                     ws.append([
@@ -1434,6 +1458,10 @@ def worker_teacher_activity_report_bulk(log_queue, user_id, user_pwd, server, de
                     style_api_row(ws, ws.max_row, _API_REPORT_HEADERS, False, student_nm, mem_nm)
                     continue
 
+                # childAge=0(늘봄)이면 curriculumTp=1, 아니면 0
+                child_age_from_class = int(_access_child_age) if _access_child_age is not None else 0
+                curriculum_tp = 1 if child_age_from_class == 0 else 0
+
                 # 커리큘럼 API에서 year, month, week 조회
                 cur_resp = get_curriculum_response(child_auth_token, child_id, server)
                 if cur_resp is not None and cur_resp.ok:
@@ -1441,8 +1469,8 @@ def worker_teacher_activity_report_bulk(log_queue, user_id, user_pwd, server, de
                     year = datetime.now().year
                     month = cur_result.get("month")
                     week = cur_result.get("week")
-                    curriculum_tp = int(cur_result.get("curriculumTp", 0))
-                    child_age_from_class = cur_result.get("childAge", 0)
+                    if child_age_from_class != 0:
+                        child_age_from_class = cur_result.get("childAge", child_age_from_class)
                 else:
                     fail_count += 1
                     cur_status = cur_resp.status_code if cur_resp else None
@@ -1557,7 +1585,8 @@ def worker_all_api_test(log_queue, user_id, user_pwd, server, device_label, step
             print(f"  [{mark}] {method:6s} {path} -> {status} {error_detail[:120]}")
         return _record
 
-    def _register_target(base_label, type_, mem_id, mem_nm, target_results):
+    def _register_target(base_label, type_, mem_id, mem_nm, target_results,
+                          class_id="", class_nm=""):
         """시트명 충돌(동명이인) 방지 후 누적 저장소에 등록."""
         sheet_label = base_label or "unnamed"
         n = 2
@@ -1570,6 +1599,8 @@ def worker_all_api_test(log_queue, user_id, user_pwd, server, device_label, step
             "type": type_,
             "mem_id": mem_id,
             "mem_nm": mem_nm,
+            "class_id": class_id,
+            "class_nm": class_nm,
         })
         results_by_target[sheet_label] = target_results
         return sheet_label
@@ -1593,57 +1624,91 @@ def worker_all_api_test(log_queue, user_id, user_pwd, server, device_label, step
             print("[ERROR] no classes found.")
             return
 
-        first_class = classes[0]
-        class_id = str(first_class.get("classId", ""))
-        class_nm = str(first_class.get("classNm", ""))
-        target_age = str(first_class.get("targetAge", ""))
-
         _gui = gui_ctx or {}
-        if _gui.get("class_id"):
-            class_id = _gui.get("class_id") or class_id
-            class_nm = _gui.get("class_nm") or class_nm
-            target_age = _gui.get("target_age") or target_age
-        print(f"[INFO] class: {class_nm} ({class_id})")
-
-        stu_resp = student_list_by_class(token, class_id, srv)
-        if stu_resp is None:
-            print("[ERROR] student list failed.")
-            return
-
-        stu_result = stu_resp.json().get("result", {})
-        students_raw = stu_result.get("studentList", [])
-        teacher_mem_id = str(stu_result.get("teacherMemId", "")).strip()
-        teacher_mem_nm = str(
-            stu_result.get("teacherMemNm")
-            or stu_result.get("teacherNm")
-            or stu_result.get("memNm")
-            or ""
-        ).strip()
-
-        # ── 타깃 결정 ──
-        targets = []  # [{"type", "studentId", "studentNm", "loginId", "preset_token"?, "preset_child_id"?}]
-        # 주의: _gui.get(key, "")는 키가 있고 값이 None이면 None을 반환 → str(None)="None"이 truthy로 처리되는 버그 있음
-        # 따라서 `or ""` 패턴으로 None을 빈 문자열로 정규화
         gui_student_id = str(_gui.get("student_id") or "").strip()
+        gui_class_id = str(_gui.get("class_id") or "").strip()
 
+        # ── 테스트 대상 반 결정 ──
         if gui_student_id:
-            # GUI 선택 시: 1명만 (현행 동작 유지)
-            targets.append({
-                "type": "선택",
-                "studentId": gui_student_id,
-                "studentNm": _gui.get("student_nm", "") or "선택",
-                "loginId": user_id,
-                "preset_token": _gui.get("auth_token") or "",
-                "preset_child_id": _gui.get("mem_id") or "",
-            })
+            # GUI 학생 선택 시: 해당 반 1개만
+            first_class = classes[0]
+            classes_to_test = [{
+                "classId": gui_class_id or str(first_class.get("classId", "")),
+                "classNm": _gui.get("class_nm") or str(first_class.get("classNm", "")),
+                "targetAge": _gui.get("target_age") or str(first_class.get("targetAge", "")),
+            }]
+        elif gui_class_id:
+            # GUI 반 선택 시: 그 반 1개만
+            classes_to_test = [{
+                "classId": gui_class_id,
+                "classNm": _gui.get("class_nm") or "",
+                "targetAge": _gui.get("target_age") or "",
+            }]
         else:
-            # 미선택 시: 선생님(있으면) + 전체 학생 (가나다순)
+            # 미선택 시: 전체 반
+            classes_to_test = [
+                {
+                    "classId": str(c.get("classId", "")),
+                    "classNm": str(c.get("classNm", "")),
+                    "targetAge": str(c.get("targetAge", "")),
+                }
+                for c in classes
+            ]
+
+        print(f"[INFO] 테스트 대상 반: {len(classes_to_test)}개")
+        for ci_info in classes_to_test:
+            print(f"  - {ci_info['classNm']} ({ci_info['classId']})")
+
+        # ── 타깃 결정 (반별 순회) ──
+        targets = []
+        all_class_names = []
+
+        for ci_info in classes_to_test:
+            class_id = ci_info["classId"]
+            class_nm = ci_info["classNm"]
+            target_age = ci_info["targetAge"]
+            all_class_names.append(f"{class_nm}({class_id})")
+            print(f"\n[INFO] class: {class_nm} ({class_id})")
+
+            if gui_student_id:
+                # GUI 학생 선택 시: 1명만
+                targets.append({
+                    "type": "선택",
+                    "studentId": gui_student_id,
+                    "studentNm": _gui.get("student_nm", "") or "선택",
+                    "loginId": user_id,
+                    "preset_token": _gui.get("auth_token") or "",
+                    "preset_child_id": _gui.get("mem_id") or "",
+                    "class_id": class_id,
+                    "class_nm": class_nm,
+                    "target_age": target_age,
+                })
+                break  # 학생 선택 시 반 루프 불필요
+
+            stu_resp = student_list_by_class(token, class_id, srv)
+            if stu_resp is None:
+                print(f"[WARN] student list failed for class {class_nm}, skip")
+                continue
+
+            stu_result = stu_resp.json().get("result", {})
+            students_raw = stu_result.get("studentList", [])
+            teacher_mem_id = str(stu_result.get("teacherMemId", "")).strip()
+            teacher_mem_nm = str(
+                stu_result.get("teacherMemNm")
+                or stu_result.get("teacherNm")
+                or stu_result.get("memNm")
+                or ""
+            ).strip()
+
             if teacher_mem_id:
                 targets.append({
                     "type": "선생님",
                     "studentId": teacher_mem_id,
                     "studentNm": teacher_mem_nm or "선생님",
                     "loginId": user_id,
+                    "class_id": class_id,
+                    "class_nm": class_nm,
+                    "target_age": target_age,
                 })
             sorted_students = sorted(
                 students_raw,
@@ -1663,7 +1728,12 @@ def worker_all_api_test(log_queue, user_id, user_pwd, server, device_label, step
                     "studentId": sid,
                     "studentNm": str(s.get("studentNm", "")).strip() or "-",
                     "loginId": lid,
+                    "class_id": class_id,
+                    "class_nm": class_nm,
+                    "target_age": target_age,
                 })
+
+        class_summary = ", ".join(all_class_names) if len(all_class_names) <= 3 else f"{len(all_class_names)}개 반"
 
         if not targets:
             print("[ERROR] no targets to test")
@@ -1676,7 +1746,7 @@ def worker_all_api_test(log_queue, user_id, user_pwd, server, device_label, step
         # ── 타깃별 실행 루프 ──
         for ti, tgt in enumerate(targets, 1):
             print(f"\n{'='*60}")
-            print(f"[{ti}/{len(targets)}] {tgt['type']}: {tgt['studentNm']} (studentId={tgt['studentId']})")
+            print(f"[{ti}/{len(targets)}] {tgt['type']}: {tgt['studentNm']} (studentId={tgt['studentId']}) | 반: {tgt.get('class_nm', '')}")
             print(f"{'='*60}")
 
             target_results = []
@@ -1687,6 +1757,7 @@ def worker_all_api_test(log_queue, user_id, user_pwd, server, device_label, step
             child_token = ""
             child_id = ""
             mem_nm_resp = ""
+            access_child_age = None
             if tgt.get("preset_token") and tgt.get("preset_child_id"):
                 child_token = tgt["preset_token"]
                 child_id = tgt["preset_child_id"]
@@ -1696,7 +1767,8 @@ def worker_all_api_test(log_queue, user_id, user_pwd, server, device_label, step
             else:
                 try:
                     access_result = authenticate_study_access_detailed(
-                        tgt["studentId"], tgt["loginId"], srv
+                        tgt["studentId"], tgt["loginId"], srv,
+                        access_type="T" if tgt["type"] == "선생님" else "C",
                     )
                     access_data = access_result.get("data") if isinstance(access_result, dict) else None
                     if not isinstance(access_data, dict):
@@ -1707,6 +1779,16 @@ def worker_all_api_test(log_queue, user_id, user_pwd, server, device_label, step
                     child_id = str(api_res.get("memId", "")).strip()
                     mem_nm_resp = str(api_res.get("memNm", "")).strip() or tgt["studentNm"]
 
+                    # childList에서 해당 계정의 childAge 추출
+                    child_list = api_res.get("childList") or []
+                    access_child_age = None
+                    for ch in child_list:
+                        if str(ch.get("childId", "")) == child_id:
+                            access_child_age = ch.get("childAge")
+                            break
+                    if access_child_age is None and child_list:
+                        access_child_age = child_list[0].get("childAge")
+
                     if child_token and child_id:
                         _record("수업시작", "POST", "/authenticate/study/access",
                                 resp=type("R", (), {"status_code": 200, "ok": True, "text": str(access_data)[:1000]})())
@@ -1715,19 +1797,22 @@ def worker_all_api_test(log_queue, user_id, user_pwd, server, device_label, step
                                 error="no child token/id in response")
                         # study/access 실패 → 이 타깃은 결과만 기록하고 다음 타깃
                         _register_target(tgt["studentNm"], tgt["type"],
-                                         tgt["studentId"], tgt["studentNm"], target_results)
+                                         tgt["studentId"], tgt["studentNm"], target_results,
+                                         tgt.get("class_id", ""), tgt.get("class_nm", ""))
                         continue
                 except Exception as e:
                     _record("수업시작", "POST", "/authenticate/study/access", error=e)
                     _register_target(tgt["studentNm"], tgt["type"],
-                                     tgt["studentId"], tgt["studentNm"], target_results)
+                                     tgt["studentId"], tgt["studentNm"], target_results,
+                                     tgt.get("class_id", ""), tgt.get("class_nm", ""))
                     continue
 
             print(f"  childToken: {child_token[:20]}..., childId: {child_id}, memNm: {mem_nm_resp}")
 
             # report용 파라미터
-            curriculum_tp = 0
-            child_age_int = 0
+            # childAge=0(늘봄)이면 curriculumTp=1, 아니면 0
+            child_age_int = int(access_child_age) if access_child_age is not None else 0
+            curriculum_tp = 1 if child_age_int == 0 else 0
             year, month, week = 0, 0, 0
             cur_resp = get_curriculum_response(child_token, child_id, srv)
             if cur_resp is not None and cur_resp.ok:
@@ -1735,8 +1820,8 @@ def worker_all_api_test(log_queue, user_id, user_pwd, server, device_label, step
                 year = date.today().year
                 month = cur_result.get("month", 0)
                 week = cur_result.get("week", 0)
-                curriculum_tp = int(cur_result.get("curriculumTp", 0))
-                child_age_int = cur_result.get("childAge", 0)
+                if child_age_int != 0:
+                    child_age_int = cur_result.get("childAge", child_age_int)
 
             # API 호출 함수 매핑 (타깃 컨텍스트에 종속 → 매 타깃마다 새 정의)
             def _call_curriculum():
@@ -1808,7 +1893,8 @@ def worker_all_api_test(log_queue, user_id, user_pwd, server, device_label, step
             base_label = mem_nm_resp or tgt["studentNm"] or "unnamed"
             _register_target(base_label, tgt["type"],
                              child_id or tgt["studentId"], mem_nm_resp or tgt["studentNm"],
-                             target_results)
+                             target_results,
+                             tgt.get("class_id", ""), tgt.get("class_nm", ""))
 
             t_pass = sum(1 for r in target_results if r[4] == "PASS")
             t_fail = sum(1 for r in target_results if r[4] == "FAIL")
@@ -1842,10 +1928,10 @@ def worker_all_api_test(log_queue, user_id, user_pwd, server, device_label, step
             top=Side(style="thin"), bottom=Side(style="thin"),
         )
 
-        # 정렬: 선생님 우선 + 학생 가나다순
+        # 정렬: 반별 그룹 → 선생님 우선 → 학생 가나다순
         sorted_meta = sorted(
             target_meta,
-            key=lambda m: (0 if m["type"] == "선생님" else 1, m["mem_nm"]),
+            key=lambda m: (m.get("class_nm", ""), 0 if m["type"] == "선생님" else 1, m["mem_nm"]),
         )
 
         # ── 요약 시트 ──
@@ -1855,12 +1941,12 @@ def worker_all_api_test(log_queue, user_id, user_pwd, server, device_label, step
         total_fail = sum(sum(1 for r in v if r[4] == "FAIL") for v in results_by_target.values())
         total_apis = total_pass + total_fail
 
-        ws_sum.merge_cells("A1:H1")
+        ws_sum.merge_cells("A1:I1")
         sc = ws_sum["A1"]
         sc.value = (
             f"API 테스트 결과 — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  |  "
             f"서버: {server_label}  |  계정: {user_id}  |  "
-            f"반: {class_nm} ({class_id})  |  "
+            f"반: {class_summary}  |  "
             f"총 대상: {total_targets}명  |  "
             f"총 API: {total_apis}개  |  PASS: {total_pass}  |  FAIL: {total_fail}"
         )
@@ -1869,7 +1955,7 @@ def worker_all_api_test(log_queue, user_id, user_pwd, server, device_label, step
         ws_sum.row_dimensions[1].height = 30
 
         ws_sum.append([])
-        sum_headers = ["No.", "대상명", "종류", "memId", "총 API", "PASS", "FAIL", "성공률"]
+        sum_headers = ["No.", "반", "대상명", "종류", "memId", "총 API", "PASS", "FAIL", "성공률"]
         for ci, h in enumerate(sum_headers, 1):
             c = ws_sum.cell(row=3, column=ci, value=h)
             c.font = header_font
@@ -1901,20 +1987,20 @@ def worker_all_api_test(log_queue, user_id, user_pwd, server, device_label, step
             t_total = t_pass + t_fail
             rate = f"{(t_pass / t_total * 100):.1f}%" if t_total else "-"
 
-            vals = [i, meta["mem_nm"], meta["type"], meta["mem_id"], t_total, t_pass, t_fail, rate]
+            vals = [i, meta.get("class_nm", ""), meta["mem_nm"], meta["type"], meta["mem_id"], t_total, t_pass, t_fail, rate]
             for ci, v in enumerate(vals, 1):
                 c = ws_sum.cell(row=row, column=ci, value=v)
                 c.font = cell_font
                 c.border = thin_border
-                c.alignment = left_align if ci == 2 else center_align
+                c.alignment = left_align if ci == 3 else center_align
 
             # 대상명 셀 → 해당 시트로 하이퍼링크
-            link_cell = ws_sum.cell(row=row, column=2)
+            link_cell = ws_sum.cell(row=row, column=3)
             link_cell.hyperlink = f"#'{sheet_name_map[meta['label']]}'!A1"
             link_cell.font = link_font
 
             # FAIL 셀 강조
-            fail_cell = ws_sum.cell(row=row, column=7)
+            fail_cell = ws_sum.cell(row=row, column=8)
             if t_fail > 0:
                 fail_cell.fill = fail_fill
                 fail_cell.font = fail_font
@@ -1937,7 +2023,7 @@ def worker_all_api_test(log_queue, user_id, user_pwd, server, device_label, step
         if fail_apis:
             section_row = len(sorted_meta) + 5
             ws_sum.merge_cells(start_row=section_row, start_column=1,
-                               end_row=section_row, end_column=8)
+                               end_row=section_row, end_column=9)
             sc2 = ws_sum.cell(row=section_row, column=1,
                               value="API별 실패 패턴 (1회 이상 FAIL)")
             sc2.font = Font(name="맑은 고딕", bold=True, size=11)
@@ -1967,13 +2053,14 @@ def worker_all_api_test(log_queue, user_id, user_pwd, server, device_label, step
                         ws_sum.cell(row=row, column=ci).fill = fail_fill
 
         ws_sum.column_dimensions["A"].width = 6
-        ws_sum.column_dimensions["B"].width = 24
-        ws_sum.column_dimensions["C"].width = 10
-        ws_sum.column_dimensions["D"].width = 14
-        ws_sum.column_dimensions["E"].width = 10
+        ws_sum.column_dimensions["B"].width = 18
+        ws_sum.column_dimensions["C"].width = 24
+        ws_sum.column_dimensions["D"].width = 10
+        ws_sum.column_dimensions["E"].width = 14
         ws_sum.column_dimensions["F"].width = 10
         ws_sum.column_dimensions["G"].width = 10
         ws_sum.column_dimensions["H"].width = 10
+        ws_sum.column_dimensions["I"].width = 10
         ws_sum.freeze_panes = "A4"
 
         # ── 타깃별 시트 ──
@@ -1991,7 +2078,7 @@ def worker_all_api_test(log_queue, user_id, user_pwd, server, device_label, step
             sc.value = (
                 f"{meta['type']}: {meta['mem_nm']} (memId={meta['mem_id']})  |  "
                 f"서버: {server_label}  |  계정: {user_id}  |  "
-                f"반: {class_nm} ({class_id})  |  "
+                f"반: {meta.get('class_nm', '')} ({meta.get('class_id', '')})  |  "
                 f"총 {len(results)}개  |  PASS: {t_pass}  |  FAIL: {t_fail}"
             )
             sc.font = Font(name="맑은 고딕", bold=True, size=12)
