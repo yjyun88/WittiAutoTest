@@ -168,7 +168,7 @@ def authenticate_study_access(studentId, loginId, server):
         return None
 
 
-def authenticate_study_access_detailed(studentId, loginId, server):
+def authenticate_study_access_detailed(studentId, loginId, server, access_type="C"):
     """
     study/access 호출 상세 결과 반환 (HTTP 에러 포함)
     return dict:
@@ -196,7 +196,7 @@ def authenticate_study_access_detailed(studentId, loginId, server):
         body = {
             "studentId": normalized_student_id,
             "loginId": loginId,
-            "accessType": "C",
+            "accessType": access_type,
         }
 
         response = requests.post(
