@@ -279,6 +279,26 @@ def get_curriculum_response(authToken, childId, server):
         return None
 
 
+# 위티월드 메인 화면 조회 API (보유 위티팡 조회)
+def get_witti_app_main(authToken, server):
+    try:
+        url = f"https://{server}.wittiverse.com/v2/witti-app/main"
+        headers = {
+            'Authorization': f'Bearer {authToken}',
+        }
+
+        response = requests.get(url, headers=headers, timeout=20)
+        response.raise_for_status()
+        return response
+
+    except requests.exceptions.RequestException as e:
+        print(f"[ERROR] 위티월드 메인 조회 실패 (네트워크/서버 오류): {e}")
+        return None
+    except Exception as e:
+        print(f"[ERROR] 위티월드 메인 조회 중 예기치 않은 오류 발생: {e}")
+        return None
+
+
 # 위티스쿨 메인 화면 조회 API
 def get_witti_school_main(authToken, server):
     try:

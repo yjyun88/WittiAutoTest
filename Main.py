@@ -29,6 +29,7 @@ from request_API import (
     get_parent_report,
     post_attendance_curriculum,
     get_witti_school_main,
+    get_witti_app_main,
     get_aram_bookworld_subject,
     get_witti_school_ebook_main,
     get_tv_main,
@@ -871,6 +872,143 @@ def worker_witti_school_main_bulk(log_queue, user_id, user_pwd, server, device_l
         print(traceback.format_exc())
 
 
+def worker_witti_app_main_bulk(log_queue, user_id, user_pwd, server, device_label):
+    env_code = {
+        "Prod": "PRD",
+        "QA": "QA",
+        "Dev": "DEV",
+    }.get(server, str(server).upper())
+
+    match server:
+        case "Prod":
+            server = "api"
+        case "QA":
+            server = "qa-api"
+        case "Dev":
+            server = "dev-api"
+        case _:
+            server = "api"
+
+    import builtins
+    import traceback
+    from datetime import datetime
+
+    def _print_via_queue(*args, sep=" ", end="\n", **kwargs):
+        msg = sep.join(str(a) for a in args) + end
+        log_queue.put(msg.rstrip("\n"))
+
+    builtins.print = _print_via_queue
+
+    try:
+        print("[INFO] witti-app/main bulk test started")
+        token = login_step1(user_id, user_pwd, server)
+        if not token:
+            print("[ERROR] login failed. cannot load classes.")
+            return
+
+        class_resp = class_list(token, user_id, server)
+        if class_resp is None:
+            print("[ERROR] class list request failed.")
+            return
+
+        class_data = class_resp.json()
+        classes = class_data.get("result", {}).get("classList", [])
+        print(f"[INFO] classes loaded: {len(classes)}")
+
+        report_path, wb, ws = init_api_report("witti_app_main_result", user_id)
+
+        total_students = 0
+        success_count = 0
+        fail_count = 0
+
+        for cls in classes:
+            class_id = str(cls.get("classId", "")).strip()
+            class_nm = str(cls.get("classNm", "")).strip()
+            target_age = str(cls.get("targetAge", "")).strip()
+            if not class_id:
+                continue
+
+            student_resp = student_list_by_class(token, class_id, server)
+            if student_resp is None:
+                print(f"[WARN] student list failed for classId={class_id}")
+                continue
+
+            students = student_resp.json().get("result", {}).get("studentList", [])
+            print(f"[INFO] class={class_nm} ({class_id}), students={len(students)}")
+
+            for student in students:
+                total_students += 1
+                tested_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                student_id = str(student.get("studentId", "")).strip()
+                student_nm = str(student.get("studentNm", "")).strip()
+                login_id_used = str(
+                    student.get("loginId")
+                    or student.get("studentLoginId")
+                    or user_id
+                ).strip()
+
+                access_result = authenticate_study_access_detailed(student_id, login_id_used, server)
+                access_data = access_result.get("data") if isinstance(access_result, dict) else None
+                if not isinstance(access_data, dict):
+                    access_data = {}
+                access_api_result = access_data.get("result", {}) if isinstance(access_data.get("result", {}), dict) else {}
+
+                child_auth_token = str(access_api_result.get("authToken", "")).strip()
+                child_id = str(access_api_result.get("memId", "")).strip()
+                mem_nm = str(access_api_result.get("memNm", "")).strip()
+
+                if not access_result.get("ok") or not child_auth_token:
+                    fail_count += 1
+                    ws.append([
+                        tested_at, env_code, class_id, class_nm, target_age,
+                        student_id, student_nm, login_id_used,
+                        access_result.get("status_code"),
+                        "FAIL", mem_nm, child_id,
+                        access_result.get("error", "") or "study/access failed",
+                    ])
+                    style_api_row(ws, ws.max_row, _API_REPORT_HEADERS, False, student_nm, mem_nm)
+                    continue
+
+                try:
+                    resp = get_witti_app_main(child_auth_token, server)
+                    if resp is not None:
+                        http_status = resp.status_code
+                        ok = resp.ok
+                        error_msg = "" if ok else resp.text
+                    else:
+                        http_status = None
+                        ok = False
+                        error_msg = "witti-app/main response is None"
+                except Exception as e:
+                    http_status = None
+                    ok = False
+                    error_msg = str(e)
+
+                if ok:
+                    success_count += 1
+                else:
+                    fail_count += 1
+
+                ws.append([
+                    tested_at, env_code, class_id, class_nm, target_age,
+                    student_id, student_nm, login_id_used,
+                    http_status,
+                    "PASS" if ok else "FAIL",
+                    mem_nm, child_id, error_msg,
+                ])
+                style_api_row(ws, ws.max_row, _API_REPORT_HEADERS, ok, student_nm, mem_nm)
+
+        save_api_report(wb, ws, report_path)
+        print(
+            f"[INFO] witti-app/main bulk completed. total={total_students}, "
+            f"success={success_count}, fail={fail_count}"
+        )
+
+    except Exception as e:
+        print(f"[ERROR] witti-app/main bulk exception: {e!r}")
+        print(traceback.format_exc())
+
+
 def worker_aram_bookworld_subject_bulk(log_queue, user_id, user_pwd, server, device_label):
     env_code = {
         "Prod": "PRD",
@@ -1586,7 +1724,9 @@ def worker_all_api_test(log_queue, user_id, user_pwd, server, device_label, step
         return _record
 
     def _register_target(base_label, type_, mem_id, mem_nm, target_results,
-                          class_id="", class_nm=""):
+                          class_id="", class_nm="",
+                          tested_at="", student_nm="", student_id="",
+                          login_id="", target_age=""):
         """시트명 충돌(동명이인) 방지 후 누적 저장소에 등록."""
         sheet_label = base_label or "unnamed"
         n = 2
@@ -1601,12 +1741,20 @@ def worker_all_api_test(log_queue, user_id, user_pwd, server, device_label, step
             "mem_nm": mem_nm,
             "class_id": class_id,
             "class_nm": class_nm,
+            "tested_at": tested_at,
+            "student_nm": student_nm,
+            "student_id": student_id,
+            "login_id": login_id,
+            "target_age": target_age,
         })
         results_by_target[sheet_label] = target_results
         return sheet_label
 
     try:
         print(f"[INFO] ALL API test started ({len(steps)}개 steps)")
+
+        # 사용자가 "수업시작"을 명시 선택했는지 (성공 기록 여부 결정 — 실패는 항상 기록)
+        record_study_access_success = "수업시작 (study/access)" in steps
 
         # ── 로그인 & 반 정보 ──
         token = login_step1(user_id, user_pwd, srv)
@@ -1749,6 +1897,7 @@ def worker_all_api_test(log_queue, user_id, user_pwd, server, device_label, step
             print(f"[{ti}/{len(targets)}] {tgt['type']}: {tgt['studentNm']} (studentId={tgt['studentId']}) | 반: {tgt.get('class_nm', '')}")
             print(f"{'='*60}")
 
+            target_tested_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             target_results = []
             _record = _make_recorder(target_results)
             ctx = {"prod_id": "P0001", "ptnr_id": "1102"}
@@ -1762,8 +1911,9 @@ def worker_all_api_test(log_queue, user_id, user_pwd, server, device_label, step
                 child_token = tgt["preset_token"]
                 child_id = tgt["preset_child_id"]
                 mem_nm_resp = tgt["studentNm"]
-                _record("수업시작", "POST", "/authenticate/study/access",
-                        resp=type("R", (), {"status_code": 200, "ok": True, "text": "(GUI preset)"})())
+                if record_study_access_success:
+                    _record("수업시작", "POST", "/authenticate/study/access",
+                            resp=type("R", (), {"status_code": 200, "ok": True, "text": "(GUI preset)"})())
             else:
                 try:
                     access_result = authenticate_study_access_detailed(
@@ -1790,21 +1940,30 @@ def worker_all_api_test(log_queue, user_id, user_pwd, server, device_label, step
                         access_child_age = child_list[0].get("childAge")
 
                     if child_token and child_id:
-                        _record("수업시작", "POST", "/authenticate/study/access",
-                                resp=type("R", (), {"status_code": 200, "ok": True, "text": str(access_data)[:1000]})())
+                        if record_study_access_success:
+                            _record("수업시작", "POST", "/authenticate/study/access",
+                                    resp=type("R", (), {"status_code": 200, "ok": True, "text": str(access_data)[:1000]})())
                     else:
                         _record("수업시작", "POST", "/authenticate/study/access",
                                 error="no child token/id in response")
                         # study/access 실패 → 이 타깃은 결과만 기록하고 다음 타깃
                         _register_target(tgt["studentNm"], tgt["type"],
                                          tgt["studentId"], tgt["studentNm"], target_results,
-                                         tgt.get("class_id", ""), tgt.get("class_nm", ""))
+                                         tgt.get("class_id", ""), tgt.get("class_nm", ""),
+                                         tested_at=target_tested_at,
+                                         student_nm=tgt["studentNm"], student_id=tgt["studentId"],
+                                         login_id=tgt.get("loginId", ""),
+                                         target_age=tgt.get("target_age", ""))
                         continue
                 except Exception as e:
                     _record("수업시작", "POST", "/authenticate/study/access", error=e)
                     _register_target(tgt["studentNm"], tgt["type"],
                                      tgt["studentId"], tgt["studentNm"], target_results,
-                                     tgt.get("class_id", ""), tgt.get("class_nm", ""))
+                                     tgt.get("class_id", ""), tgt.get("class_nm", ""),
+                                     tested_at=target_tested_at,
+                                     student_nm=tgt["studentNm"], student_id=tgt["studentId"],
+                                     login_id=tgt.get("loginId", ""),
+                                     target_age=tgt.get("target_age", ""))
                     continue
 
             print(f"  childToken: {child_token[:20]}..., childId: {child_id}, memNm: {mem_nm_resp}")
@@ -1842,6 +2001,10 @@ def worker_all_api_test(log_queue, user_id, user_pwd, server, device_label, step
                         ctx["ptnr_id"] = str(pl[0].get("ptnrId", ctx["ptnr_id"]))
                 return ("위티스쿨 메인", "GET", "/witti-school/main", resp)
 
+            def _call_witti_app_main():
+                resp = get_witti_app_main(child_token, srv)
+                return ("보유 위티팡 조회", "GET", "/witti-app/main", resp)
+
             def _call_aram_bookworld_subject():
                 resp = get_aram_bookworld_subject(child_token, ctx["ptnr_id"], ctx["prod_id"], srv)
                 return ("아람북월드 과목", "GET", "/witti-school/aram-bookworld/subject", resp)
@@ -1866,6 +2029,7 @@ def worker_all_api_test(log_queue, user_id, user_pwd, server, device_label, step
                 "커리큘럼 조회 (curriculum)": _call_curriculum,
                 "출석 시간 전송 (attendance/curriculum)": _call_attendance_curriculum,
                 "위티스쿨 메인 (witti-school/main)": _call_witti_school_main,
+                "보유 위티팡 조회 (witti-app/main)": _call_witti_app_main,
                 "아람북월드 과목 (aram-bookworld/subject)": _call_aram_bookworld_subject,
                 "도서관 메인 (e-book/main)": _call_ebook_main,
                 "위티TV 메인 (tv/main)": _call_tv_main,
@@ -1894,7 +2058,11 @@ def worker_all_api_test(log_queue, user_id, user_pwd, server, device_label, step
             _register_target(base_label, tgt["type"],
                              child_id or tgt["studentId"], mem_nm_resp or tgt["studentNm"],
                              target_results,
-                             tgt.get("class_id", ""), tgt.get("class_nm", ""))
+                             tgt.get("class_id", ""), tgt.get("class_nm", ""),
+                             tested_at=target_tested_at,
+                             student_nm=tgt["studentNm"], student_id=tgt["studentId"],
+                             login_id=tgt.get("loginId", ""),
+                             target_age=tgt.get("target_age", ""))
 
             t_pass = sum(1 for r in target_results if r[4] == "PASS")
             t_fail = sum(1 for r in target_results if r[4] == "FAIL")
@@ -1941,7 +2109,7 @@ def worker_all_api_test(log_queue, user_id, user_pwd, server, device_label, step
         total_fail = sum(sum(1 for r in v if r[4] == "FAIL") for v in results_by_target.values())
         total_apis = total_pass + total_fail
 
-        ws_sum.merge_cells("A1:I1")
+        ws_sum.merge_cells("A1:O1")
         sc = ws_sum["A1"]
         sc.value = (
             f"API 테스트 결과 — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  |  "
@@ -1955,7 +2123,11 @@ def worker_all_api_test(log_queue, user_id, user_pwd, server, device_label, step
         ws_sum.row_dimensions[1].height = 30
 
         ws_sum.append([])
-        sum_headers = ["No.", "반", "대상명", "종류", "memId", "총 API", "PASS", "FAIL", "성공률"]
+        sum_headers = [
+            "No.", "tested_at", "반", "classId", "targetAge",
+            "대상명", "studentId", "loginIdUsed", "memNm", "memId",
+            "종류", "총 API", "PASS", "FAIL", "성공률",
+        ]
         for ci, h in enumerate(sum_headers, 1):
             c = ws_sum.cell(row=3, column=ci, value=h)
             c.font = header_font
@@ -1987,25 +2159,54 @@ def worker_all_api_test(log_queue, user_id, user_pwd, server, device_label, step
             t_total = t_pass + t_fail
             rate = f"{(t_pass / t_total * 100):.1f}%" if t_total else "-"
 
-            vals = [i, meta.get("class_nm", ""), meta["mem_nm"], meta["type"], meta["mem_id"], t_total, t_pass, t_fail, rate]
+            student_nm = meta.get("student_nm", "") or meta["mem_nm"]
+            vals = [
+                i,
+                meta.get("tested_at", ""),
+                meta.get("class_nm", ""),
+                meta.get("class_id", ""),
+                meta.get("target_age", ""),
+                student_nm,
+                meta.get("student_id", ""),
+                meta.get("login_id", ""),
+                meta["mem_nm"],
+                meta["mem_id"],
+                meta["type"],
+                t_total, t_pass, t_fail, rate,
+            ]
             for ci, v in enumerate(vals, 1):
                 c = ws_sum.cell(row=row, column=ci, value=v)
                 c.font = cell_font
                 c.border = thin_border
-                c.alignment = left_align if ci == 3 else center_align
+                c.alignment = left_align if ci == 6 else center_align
 
-            # 대상명 셀 → 해당 시트로 하이퍼링크
-            link_cell = ws_sum.cell(row=row, column=3)
+            # 대상명 셀(column 6) → 해당 시트로 하이퍼링크
+            link_cell = ws_sum.cell(row=row, column=6)
             link_cell.hyperlink = f"#'{sheet_name_map[meta['label']]}'!A1"
             link_cell.font = link_font
 
-            # FAIL 셀 강조
-            fail_cell = ws_sum.cell(row=row, column=8)
+            # studentNm vs memNm 불일치 강조 (column 6 = 대상명, column 9 = memNm)
+            api_mem_nm = meta["mem_nm"]
+            if student_nm and api_mem_nm and student_nm != api_mem_nm:
+                mismatch_fill = PatternFill(fill_type="solid", start_color="FFCCCC", end_color="FFCCCC")
+                mismatch_font = Font(name="맑은 고딕", size=10, color="FF0000", bold=True)
+                # 하이퍼링크 폰트 색을 살리되 배경만 mismatch
+                ws_sum.cell(row=row, column=6).fill = mismatch_fill
+                memnm_cell = ws_sum.cell(row=row, column=9)
+                memnm_cell.fill = mismatch_fill
+                memnm_cell.font = mismatch_font
+
+            # PASS 셀(column 13) 강조 (전부 통과일 때만 녹색)
+            pass_cell = ws_sum.cell(row=row, column=13)
+            if t_fail == 0 and t_pass > 0:
+                pass_cell.fill = pass_fill
+                pass_cell.font = pass_font
+
+            # FAIL 셀(column 14) 강조 (실패 있을 때만 빨강)
+            fail_cell = ws_sum.cell(row=row, column=14)
             if t_fail > 0:
                 fail_cell.fill = fail_fill
                 fail_cell.font = fail_font
-            else:
-                fail_cell.fill = pass_fill
 
         # API별 실패 패턴 섹션
         api_fail_count = {}  # (method, path) → set of labels
@@ -2023,7 +2224,7 @@ def worker_all_api_test(log_queue, user_id, user_pwd, server, device_label, step
         if fail_apis:
             section_row = len(sorted_meta) + 5
             ws_sum.merge_cells(start_row=section_row, start_column=1,
-                               end_row=section_row, end_column=9)
+                               end_row=section_row, end_column=15)
             sc2 = ws_sum.cell(row=section_row, column=1,
                               value="API별 실패 패턴 (1회 이상 FAIL)")
             sc2.font = Font(name="맑은 고딕", bold=True, size=11)
@@ -2052,15 +2253,21 @@ def worker_all_api_test(log_queue, user_id, user_pwd, server, device_label, step
                     for ci in range(1, 4):
                         ws_sum.cell(row=row, column=ci).fill = fail_fill
 
-        ws_sum.column_dimensions["A"].width = 6
-        ws_sum.column_dimensions["B"].width = 18
-        ws_sum.column_dimensions["C"].width = 24
-        ws_sum.column_dimensions["D"].width = 10
-        ws_sum.column_dimensions["E"].width = 14
-        ws_sum.column_dimensions["F"].width = 10
-        ws_sum.column_dimensions["G"].width = 10
-        ws_sum.column_dimensions["H"].width = 10
-        ws_sum.column_dimensions["I"].width = 10
+        ws_sum.column_dimensions["A"].width = 6   # No.
+        ws_sum.column_dimensions["B"].width = 20  # tested_at
+        ws_sum.column_dimensions["C"].width = 16  # 반
+        ws_sum.column_dimensions["D"].width = 14  # classId
+        ws_sum.column_dimensions["E"].width = 10  # targetAge
+        ws_sum.column_dimensions["F"].width = 22  # 대상명 (하이퍼링크)
+        ws_sum.column_dimensions["G"].width = 14  # studentId
+        ws_sum.column_dimensions["H"].width = 16  # loginIdUsed
+        ws_sum.column_dimensions["I"].width = 16  # memNm
+        ws_sum.column_dimensions["J"].width = 24  # memId
+        ws_sum.column_dimensions["K"].width = 10  # 종류
+        ws_sum.column_dimensions["L"].width = 10  # 총 API
+        ws_sum.column_dimensions["M"].width = 10  # PASS
+        ws_sum.column_dimensions["N"].width = 10  # FAIL
+        ws_sum.column_dimensions["O"].width = 10  # 성공률
         ws_sum.freeze_panes = "A4"
 
         # ── 타깃별 시트 ──
@@ -2154,7 +2361,7 @@ def worker_all_api_test(log_queue, user_id, user_pwd, server, device_label, step
 
 def worker_api_pipeline(log_queue, user_id, user_pwd, server, device_label, steps,
                         gui_ctx=None):
-    """우측 리스트의 API들을 순서대로 각각 독립 실행하여 개별 보고서를 생성한다."""
+    """ALL 또는 개별 API 선택 모두 worker_all_api_test로 라우팅하여 통일된 보고서 양식 생성."""
     import builtins
 
     def _print_via_queue(*args, sep=" ", end="\n", **kwargs):
@@ -2163,43 +2370,30 @@ def worker_api_pipeline(log_queue, user_id, user_pwd, server, device_label, step
 
     builtins.print = _print_via_queue
 
-    print(f"[INFO] API pipeline started: {len(steps)}개 API 순차 실행")
+    # CALL_MAP과 동일 키 집합 + study/access (자동 수행)
+    ALL_API_STEPS = [
+        "수업시작 (study/access)",
+        "커리큘럼 조회 (curriculum)",
+        "출석 시간 전송 (attendance/curriculum)",
+        "위티스쿨 메인 (witti-school/main)",
+        "보유 위티팡 조회 (witti-app/main)",
+        "아람북월드 과목 (aram-bookworld/subject)",
+        "도서관 메인 (e-book/main)",
+        "위티TV 메인 (tv/main)",
+        "선생님 활동현황 (report/teacherActivityReport)",
+        "학습 리포트 > 부모(학생) / 주간 (report/parentReport)",
+    ]
 
-    # API 이름 → 기존 worker 함수 매핑
-    WORKER_MAP = {
-        "수업시작 (study/access)": worker_study_access_bulk,
-        "커리큘럼 조회 (curriculum)": worker_curriculum_bulk,
-        "출석 시간 전송 (attendance/curriculum)": worker_attendance_curriculum_bulk,
-        "위티스쿨 메인 (witti-school/main)": worker_witti_school_main_bulk,
-        "아람북월드 과목 (aram-bookworld/subject)": worker_aram_bookworld_subject_bulk,
-        "도서관 메인 (e-book/main)": worker_ebook_main_bulk,
-        "위티TV 메인 (tv/main)": worker_tv_main_bulk,
-        "선생님 활동현황 (report/teacherActivityReport)": worker_teacher_activity_report_bulk,
-        "학습 리포트 > 부모(학생) / 주간 (report/parentReport)": worker_parent_report_bulk,
-    }
-
-    # ALL 선택 시 단일 계정 전체 API 테스트
     if "ALL" in steps:
-        all_steps = [k for k in WORKER_MAP.keys()]
-        print(f"[INFO] ALL 모드: 단일 계정 전체 API 테스트 실행 ({len(all_steps)}개)")
-        worker_all_api_test(log_queue, user_id, user_pwd, server, device_label, all_steps,
-                            gui_ctx=gui_ctx)
-        return
+        steps_to_run = ALL_API_STEPS
+        print(f"[INFO] ALL 모드: 전체 API 실행 ({len(steps_to_run)}개)")
+    else:
+        # 개별 선택도 동일 양식 사용. 수업시작은 통과시킴(사용자가 명시 선택 시만 결과 기록됨)
+        steps_to_run = list(steps)
+        print(f"[INFO] 개별 모드: {len(steps_to_run)}개 API 실행")
 
-    for idx, step_name in enumerate(steps, 1):
-        print(f"\n{'='*50}")
-        print(f"[{idx}/{len(steps)}] {step_name} 실행 시작")
-        print(f"{'='*50}")
-
-        worker_fn = WORKER_MAP.get(step_name)
-        if worker_fn is None:
-            print(f"[ERROR] 알 수 없는 API: {step_name}")
-            continue
-
-        # 기존 worker를 직접 호출 (같은 프로세스 내에서 순차 실행)
-        worker_fn(log_queue, user_id, user_pwd, server, device_label)
-
-    print(f"\n[INFO] 모든 API 실행 완료 ({len(steps)}개)")
+    worker_all_api_test(log_queue, user_id, user_pwd, server, device_label, steps_to_run,
+                        gui_ctx=gui_ctx)
 
 
 if getattr(sys, "frozen", False):
@@ -2210,6 +2404,7 @@ if getattr(sys, "frozen", False):
     __main__.worker_curriculum_bulk = worker_curriculum_bulk
     __main__.worker_attendance_curriculum_bulk = worker_attendance_curriculum_bulk
     __main__.worker_witti_school_main_bulk = worker_witti_school_main_bulk
+    __main__.worker_witti_app_main_bulk = worker_witti_app_main_bulk
     __main__.worker_aram_bookworld_subject_bulk = worker_aram_bookworld_subject_bulk
     __main__.worker_ebook_main_bulk = worker_ebook_main_bulk
     __main__.worker_tv_main_bulk = worker_tv_main_bulk
@@ -2647,6 +2842,7 @@ class MainApp(QtWidgets.QMainWindow):
         "커리큘럼 조회 (curriculum)",
         "출석 시간 전송 (attendance/curriculum)",
         "위티스쿨 메인 (witti-school/main)",
+        "보유 위티팡 조회 (witti-app/main)",
         "아람북월드 과목 (aram-bookworld/subject)",
         "도서관 메인 (e-book/main)",
         "위티TV 메인 (tv/main)",
