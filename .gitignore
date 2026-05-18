@@ -8,3 +8,4 @@ build/
 dist/
 .claude/
 .idea/
+.tmp_*
