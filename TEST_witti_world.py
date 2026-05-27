@@ -22,6 +22,7 @@ mew_next = Template(r"button_images\witti_world\mew_next.png", resolution=BASE_R
 mew_exit = Template(r"button_images\witti_world\mew_exit.png", resolution=BASE_RESOLUTION)
 mew_exit_y = Template(r"button_images\witti_world\mew_exit_y.png", resolution=BASE_RESOLUTION)
 exit_tpl = Template(r"button_images\witti_world\school_exit.png", resolution=BASE_RESOLUTION)
+exit_tpl_2 = Template(r"button_images\witti_world\school_exit_2.png", resolution=BASE_RESOLUTION)
 exit_y_tpl = Template(r"button_images\witti_world\school_exit_y.png", resolution=BASE_RESOLUTION)
 mew_after_tpl = Template(r"button_images\mew_down.png", resolution=BASE_RESOLUTION)
 mew_after_tpl_2 = Template(r"button_images\mew_down_9.png", resolution=BASE_RESOLUTION, threshold=0.8)
@@ -96,7 +97,7 @@ def check_wittiaram(width, height, authToken, subjCd, itemCd, curtnSeq, server):
 
     # 광장으로 나가기
     print("아람북월드 컨텐츠 검증 종료, 광장으로 이동합니다.")
-    touch_template(exit_tpl)
+    touch_template(exit_tpl_2)
     wait(exit_tpl, timeout=60)
     touch_template(exit_tpl)
     wait(exit_y_tpl, timeout=60)
@@ -219,7 +220,7 @@ def check_wittimew(width, height, title_name):
     sleep(1)
     touch_template(mew_exit_y)
     sleep(1)
-    touch_template(exit_tpl)
+    touch_template(exit_tpl_2)
     sleep(1)
     touch_template(exit_tpl)
     sleep(1)
