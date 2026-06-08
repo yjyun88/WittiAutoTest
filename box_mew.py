@@ -52,7 +52,17 @@ def _filename_hint_text(path):
 
 
 
-def _match_candidates_in_roi(src_bgr, tpl_bgr, roi_abs, scale_min=0.7, scale_max=1.4, scale_step=0.05):
+def _match_candidates_in_roi(
+    src_bgr,
+    tpl_bgr,
+    roi_abs,
+    scale_min=0.7,
+    scale_max=1.4,
+    scale_step=0.05,
+    x_stretch_min=0.90,
+    x_stretch_max=1.20,
+    x_stretch_step=0.05,
+):
     x1, y1, x2, y2 = roi_abs
     crop = src_bgr[y1:y2 + 1, x1:x2 + 1]
     if crop.size == 0:
@@ -62,10 +72,16 @@ def _match_candidates_in_roi(src_bgr, tpl_bgr, roi_abs, scale_min=0.7, scale_max
     best = []
     s = scale_min
     while s <= scale_max + 1e-9:
-        tw = max(1, int(tpl_bgr.shape[1] * s))
         th = max(1, int(tpl_bgr.shape[0] * s))
-        if tw <= cw and th <= ch:
-            tpl = tpl_bgr if abs(s - 1.0) < 1e-9 else cv2.resize(
+        xs = x_stretch_min
+        while xs <= x_stretch_max + 1e-9:
+            scale_x = s * xs
+            tw = max(1, int(tpl_bgr.shape[1] * scale_x))
+            if tw > cw or th > ch:
+                xs += x_stretch_step
+                continue
+
+            tpl = tpl_bgr if abs(scale_x - 1.0) < 1e-9 and abs(s - 1.0) < 1e-9 else cv2.resize(
                 tpl_bgr, (tw, th), interpolation=cv2.INTER_CUBIC
             )
             res = cv2.matchTemplate(crop, tpl, cv2.TM_CCOEFF_NORMED)
@@ -73,7 +89,7 @@ def _match_candidates_in_roi(src_bgr, tpl_bgr, roi_abs, scale_min=0.7, scale_max
             # Keep top-2 candidates from each scale quickly.
             flat = res.reshape(-1)
             if flat.size == 0:
-                s += scale_step
+                xs += x_stretch_step
                 continue
             k = 2 if flat.size >= 2 else 1
             idx = np.argpartition(flat, -k)[-k:]
@@ -87,10 +103,14 @@ def _match_candidates_in_roi(src_bgr, tpl_bgr, roi_abs, scale_min=0.7, scale_max
                 cand = {
                     "score": score,
                     "scale": float(s),
+                    "scale_x": float(scale_x),
+                    "scale_y": float(s),
+                    "x_stretch": float(xs),
                     "rect": (x1 + xx, y1 + yy, tw, th),
                     "center": (x1 + xx + (tw / 2.0), y1 + yy + (th / 2.0)),
                 }
                 best.append(cand)
+            xs += x_stretch_step
         s += scale_step
 
     if not best:
@@ -221,7 +241,8 @@ def _find_and_touch_mew_item(template_path):
         cand_log = (
             f"score={cand['score']:.3f} tag={tag_score:.3f} ocr={ocr_sim:.3f} "
             f"final={final_score:.3f} margin={margin:.3f} strong={strong_primary_match} "
-            f"scale={cand['scale']:.2f}"
+            f"scale_x={cand.get('scale_x', cand['scale']):.2f} "
+            f"scale_y={cand.get('scale_y', cand['scale']):.2f}"
         )
 
         if final_score > fallback_rank:
@@ -236,16 +257,15 @@ def _find_and_touch_mew_item(template_path):
                     ocr_sim >= MEW_OCR_PASS_THRESHOLD
                     and final_score >= MEW_OCR_PASS_FINAL
                     and cand["score"] >= MEW_OCR_PASS_SCORE
+                    and tag_score >= MEW_STRONG_TAG_FLOOR
                 )
                 or (
                     margin >= MEW_MIN_MARGIN
                     and (
                         (
                             strong_primary_match
-                            and (
-                                tag_score >= MEW_STRONG_TAG_FLOOR
-                                or ocr_sim >= MEW_STRONG_OCR_FLOOR
-                            )
+                            and tag_score >= MEW_STRONG_TAG_FLOOR
+                            and ocr_sim >= MEW_STRONG_OCR_FLOOR
                         )
                         or (
                             tag_score >= MEW_TAG_SCORE_THRESHOLD

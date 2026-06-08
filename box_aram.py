@@ -41,7 +41,17 @@ def _build_activity_stage_map(content_info):
 
 
 
-def _best_multimode_match(src_bgr, tpl_bgr, roi_abs, scale_min=0.6, scale_max=1.5, scale_step=0.05):
+def _best_multimode_match(
+    src_bgr,
+    tpl_bgr,
+    roi_abs,
+    scale_min=0.6,
+    scale_max=1.5,
+    scale_step=0.05,
+    x_stretch_min=0.90,
+    x_stretch_max=1.20,
+    x_stretch_step=0.05,
+):
     x1, y1, x2, y2 = roi_abs
     crop = src_bgr[y1:y2 + 1, x1:x2 + 1]
     if crop.size == 0:
@@ -53,10 +63,16 @@ def _best_multimode_match(src_bgr, tpl_bgr, roi_abs, scale_min=0.6, scale_max=1.
     best = None
     s = scale_min
     while s <= scale_max + 1e-9:
-        tw = max(1, int(tpl_bgr.shape[1] * s))
         th = max(1, int(tpl_bgr.shape[0] * s))
-        if tw <= crop.shape[1] and th <= crop.shape[0]:
-            tpl = tpl_bgr if abs(s - 1.0) < 1e-9 else cv2.resize(
+        xs = x_stretch_min
+        while xs <= x_stretch_max + 1e-9:
+            scale_x = s * xs
+            tw = max(1, int(tpl_bgr.shape[1] * scale_x))
+            if tw > crop.shape[1] or th > crop.shape[0]:
+                xs += x_stretch_step
+                continue
+
+            tpl = tpl_bgr if abs(scale_x - 1.0) < 1e-9 and abs(s - 1.0) < 1e-9 else cv2.resize(
                 tpl_bgr, (tw, th), interpolation=cv2.INTER_CUBIC
             )
             tpl_gray = cv2.cvtColor(tpl, cv2.COLOR_BGR2GRAY)
@@ -81,9 +97,13 @@ def _best_multimode_match(src_bgr, tpl_bgr, roi_abs, scale_min=0.6, scale_max=1.
                 "center": (cx, cy),
                 "rect": (x1 + c_loc[0], y1 + c_loc[1], tw, th),
                 "scale": float(s),
+                "scale_x": float(scale_x),
+                "scale_y": float(s),
+                "x_stretch": float(xs),
             }
             if best is None or cand["score"] > best["score"]:
                 best = cand
+            xs += x_stretch_step
         s += scale_step
     return best
 
@@ -158,6 +178,8 @@ def _find_and_touch_aram_item(template_path):
         print(
             f"[MATCH] reject score={match['score']:.3f} color={match['color']:.3f} "
             f"gray={match['gray']:.3f} edge={match['edge']:.3f} "
+            f"scale_x={match.get('scale_x', match['scale']):.2f} "
+            f"scale_y={match.get('scale_y', match['scale']):.2f} "
             f"layout={layout_ok} ocr={ocr_ok} ocr_sim={ocr_sim:.3f}"
         )
         return False
@@ -165,7 +187,9 @@ def _find_and_touch_aram_item(template_path):
     x, y = match["center"]
     print(
         f"[MATCH] pass score={match['score']:.3f} color={match['color']:.3f} "
-        f"gray={match['gray']:.3f} edge={match['edge']:.3f} scale={match['scale']:.2f}"
+        f"gray={match['gray']:.3f} edge={match['edge']:.3f} "
+        f"scale_x={match.get('scale_x', match['scale']):.2f} "
+        f"scale_y={match.get('scale_y', match['scale']):.2f}"
     )
     touch((int(x), int(y)))
     sleep(1.0)
