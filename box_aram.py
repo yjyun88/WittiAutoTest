@@ -19,7 +19,7 @@ from utils import (
 BASE_RESOLUTION = (1920, 1200)
 LIST_ROI_REL = (0.02, 0.36, 0.98, 0.86)
 LOW_CANDIDATE_SCORE = 0.45
-PASS_SCORE = 0.62
+PASS_SCORE = 0.60
 MAX_SWIPE_ATTEMPTS = 8
 
 before_tpl = Template(r"button_images\aram_cate.png", resolution=BASE_RESOLUTION)
@@ -46,7 +46,7 @@ def _best_multimode_match(
     tpl_bgr,
     roi_abs,
     scale_min=0.6,
-    scale_max=1.5,
+    scale_max=1.9,
     scale_step=0.05,
     x_stretch_min=0.90,
     x_stretch_max=1.20,
