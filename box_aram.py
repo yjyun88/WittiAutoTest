@@ -219,13 +219,14 @@ def touch_aramlist_images(
     print(f"총 {len(aramlist_images)}개의 aramList 이미지를 터치 시도합니다.")
     activity_stage_map = _build_activity_stage_map(content_info)
 
+    # 카테고리는 리스트 진입 시 1회만 터치 (컨텐츠 종료 시 리스트 위치가 초기화됨)
+    if before_template:
+        touch_template(before_template, region_code=7)
+
     for img_file in aramlist_images:
         img_path = os.path.join(image_folder_abs, img_file)
         started_at = pytime.perf_counter()
         try:
-            if before_template:
-                touch_template(before_template, region_code=7)
-
             attempts = 0
             touched = False
             prev_screen = device().snapshot()

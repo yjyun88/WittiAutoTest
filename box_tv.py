@@ -37,13 +37,14 @@ def touch_tvlist_images(
 
     print(f"총 {len(tvlist_images)}개의 tvList 이미지를 터치 시도합니다.")
 
+    # 카테고리는 리스트 진입 시 1회만 터치 (컨텐츠 종료 시 리스트 위치가 초기화됨)
+    if before_template:
+        touch_template(before_template, region_code=7)
+
     for img_file in tvlist_images:
         img_path = os.path.join(image_folder_abs, img_file)
         started_at = pytime.perf_counter()
         try:
-            if before_template:
-                touch_template(before_template, region_code=7)
-
             attempts = 0
             touched = False
             while not touched and attempts < MAX_SWIPE_ATTEMPTS:
