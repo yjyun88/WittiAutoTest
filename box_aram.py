@@ -41,6 +41,30 @@ def _build_activity_stage_map(content_info):
 
 
 
+def _make_top_right_mask(tpl_shape, h_ratio, w_ratio):
+    """템플릿 우상단 코너(카테고리 배지 영역)를 0으로 만든 단일 채널 마스크.
+
+    아람(책놀이터) 썸네일은 앱이 우상단 카테고리 배지(예: '창의 책놀이')를
+    동적으로 렌더링하는데, API 썸네일에 박힌 배지와 달라 매칭 점수를 떨어뜨린다.
+    이 영역을 매칭에서 제외해 배지 불일치의 영향을 없앤다.
+    """
+    th, tw = tpl_shape[:2]
+    mask = np.full((th, tw), 255, dtype=np.uint8)
+    my = max(1, int(th * h_ratio))
+    mx = int(tw * (1.0 - w_ratio))
+    mask[0:my, mx:tw] = 0
+    return mask
+
+
+def _match_normed(img, tpl, mask):
+    """마스크 적용 TM_CCOEFF_NORMED (마스크 영역의 무분산으로 생기는 NaN/inf 정리)."""
+    if mask is not None:
+        res = cv2.matchTemplate(img, tpl, cv2.TM_CCOEFF_NORMED, mask=mask)
+    else:
+        res = cv2.matchTemplate(img, tpl, cv2.TM_CCOEFF_NORMED)
+    return np.nan_to_num(res, nan=-1.0, posinf=-1.0, neginf=-1.0)
+
+
 def _best_multimode_match(
     src_bgr,
     tpl_bgr,
@@ -51,6 +75,9 @@ def _best_multimode_match(
     x_stretch_min=0.90,
     x_stretch_max=1.20,
     x_stretch_step=0.05,
+    mask_top_right=True,
+    mask_tr_h_ratio=0.30,
+    mask_tr_w_ratio=0.52,
 ):
     x1, y1, x2, y2 = roi_abs
     crop = src_bgr[y1:y2 + 1, x1:x2 + 1]
@@ -78,9 +105,10 @@ def _best_multimode_match(
             tpl_gray = cv2.cvtColor(tpl, cv2.COLOR_BGR2GRAY)
             tpl_edge = cv2.Canny(tpl_gray, 80, 160)
 
-            res_color = cv2.matchTemplate(crop, tpl, cv2.TM_CCOEFF_NORMED)
-            res_gray = cv2.matchTemplate(crop_gray, tpl_gray, cv2.TM_CCOEFF_NORMED)
-            res_edge = cv2.matchTemplate(crop_edge, tpl_edge, cv2.TM_CCOEFF_NORMED)
+            # 1단계: 마스크 없이 빠르게 위치/스케일 후보 탐색 (mask 파라미터는 느려서 전체 ROI에 쓰지 않음)
+            res_color = _match_normed(crop, tpl, None)
+            res_gray = _match_normed(crop_gray, tpl_gray, None)
+            res_edge = _match_normed(crop_edge, tpl_edge, None)
 
             _, c_val, _, c_loc = cv2.minMaxLoc(res_color)
             _, g_val, _, _ = cv2.minMaxLoc(res_gray)
@@ -105,6 +133,58 @@ def _best_multimode_match(
                 best = cand
             xs += x_stretch_step
         s += scale_step
+
+    # 2단계: 최종 후보 위치 주변의 작은 창에서만 우상단 배지를 마스킹해 점수 재계산.
+    # (전체 ROI에 mask matchTemplate을 돌리면 ~4배 느려지므로, 작은 창에만 적용해 비용을 없앤다.)
+    if best is not None and mask_top_right:
+        best = _rescore_masked_top_right(
+            best, tpl_bgr, crop, crop_gray, crop_edge,
+            x1, y1, mask_tr_h_ratio, mask_tr_w_ratio,
+        )
+    return best
+
+
+def _rescore_masked_top_right(
+    best, tpl_bgr, crop, crop_gray, crop_edge,
+    x1, y1, mask_tr_h_ratio, mask_tr_w_ratio, pad=6,
+):
+    bx, by, bw, bh = best["rect"]
+    if bw <= 0 or bh <= 0:
+        return best
+
+    tpl = cv2.resize(tpl_bgr, (bw, bh), interpolation=cv2.INTER_CUBIC)
+    tpl_gray = cv2.cvtColor(tpl, cv2.COLOR_BGR2GRAY)
+    tpl_edge = cv2.Canny(tpl_gray, 80, 160)
+    tr_mask = _make_top_right_mask(tpl.shape, mask_tr_h_ratio, mask_tr_w_ratio)
+
+    # 후보 위치를 crop 로컬 좌표로 변환 후 ±pad 창을 잘라낸다.
+    lx, ly = bx - x1, by - y1
+    wx1 = max(0, lx - pad)
+    wy1 = max(0, ly - pad)
+    wx2 = min(crop.shape[1], lx + bw + pad)
+    wy2 = min(crop.shape[0], ly + bh + pad)
+    win = crop[wy1:wy2, wx1:wx2]
+    if win.shape[0] < bh or win.shape[1] < bw:
+        return best
+
+    win_gray = crop_gray[wy1:wy2, wx1:wx2]
+    win_edge = crop_edge[wy1:wy2, wx1:wx2]
+
+    rc = _match_normed(win, tpl, tr_mask)
+    rg = _match_normed(win_gray, tpl_gray, tr_mask)
+    re = _match_normed(win_edge, tpl_edge, tr_mask)
+    _, c_val, _, c_loc = cv2.minMaxLoc(rc)
+    _, g_val, _, _ = cv2.minMaxLoc(rg)
+    _, e_val, _, _ = cv2.minMaxLoc(re)
+
+    nbx = x1 + wx1 + c_loc[0]
+    nby = y1 + wy1 + c_loc[1]
+    best["color"] = float(c_val)
+    best["gray"] = float(g_val)
+    best["edge"] = float(e_val)
+    best["score"] = (0.5 * float(c_val)) + (0.3 * float(g_val)) + (0.2 * float(e_val))
+    best["rect"] = (nbx, nby, bw, bh)
+    best["center"] = (nbx + bw / 2.0, nby + bh / 2.0)
     return best
 
 
