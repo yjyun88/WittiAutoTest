@@ -2,10 +2,10 @@ from airtest.core.api import exists, swipe, touch, snapshot
 from airtest.core.error import TargetNotFoundError
 
 from Touch_template import touch_template
-from utils import Template
+from utils import Template, get_ocr_reader
 from PIL import Image
 
-import os, time, cv2
+import os, re, time, cv2
 import numpy as np
 
 from box_ACT import capture_screen
@@ -58,17 +58,61 @@ def select_step(step_num, book_num, width, height):
 
     # 리스트 이미지 찾기 + 스크롤 재시도
     book_tpl = book_templates.get(book_num)
+    tpl_bgr = imread_unicode(book_tpl.filename)
+    tpl_h, tpl_w = tpl_bgr.shape[:2]
     start_pos = (width // 2, int(height * 0.8))
     end_pos   = (width // 2, int(height * 0.2))
 
     while True:
-        match = exists(book_tpl)
-        if match:
-            print(f"[Info] {book_num}호 템플릿 위치 찾음: {match}")
-            return match  # x, y 좌표 반환
-        print(f"[Info] {book_num}호 템플릿 현재 화면에 없음, 아래로 스와이프")
+        screen_path = os.path.join(DEBUG_DIR, "select_step_temp.png")
+        snapshot(screen_path)
+        screen = cv2.imread(screen_path)
+        os.remove(screen_path)
+
+        max_val, max_loc, scale = match_multi_scale(
+            screen, tpl_bgr,
+            threshold=0.6,
+            scale_min=0.65,
+            scale_max=1.35,
+            scale_step=0.02,
+        )
+        if max_loc is not None:
+            ocr_ok, ocr_text = verify_number_by_ocr(screen, max_loc, tpl_w, tpl_h, scale, book_num)
+            if ocr_ok:
+                x = max_loc[0] + int(tpl_w * scale) // 2
+                y = max_loc[1] + int(tpl_h * scale) // 2
+                print(f"[Info] {book_num}호 템플릿 위치 찾음: ({x},{y}) score={max_val:.3f} scale={scale:.2f}")
+                return x, y  # x, y 좌표 반환
+            print(f"[Info] {book_num}호 이미지 매칭(score={max_val:.3f})은 되었으나 OCR 검증 실패(인식='{ocr_text}') → 스와이프 후 재탐색")
+        else:
+            print(f"[Info] {book_num}호 템플릿 현재 화면에 없음, 아래로 스와이프")
         swipe(start_pos, end_pos)
         time.sleep(1)
+
+
+# 배지 디자인이 모든 호(1~13)가 동일해 이미지 매칭만으로는 숫자를 구분하기 어려움
+# → 매칭된 영역을 OCR로 재확인해 실제 숫자가 book_num과 일치하는지 검증
+def verify_number_by_ocr(screen, loc, tpl_w, tpl_h, scale, book_num, pad_ratio=0.3):
+    sw, sh = int(tpl_w * scale), int(tpl_h * scale)
+    pad_x, pad_y = int(sw * pad_ratio), int(sh * pad_ratio)
+    img_h, img_w = screen.shape[:2]
+    x1 = max(loc[0] - pad_x, 0)
+    y1 = max(loc[1] - pad_y, 0)
+    x2 = min(loc[0] + sw + pad_x, img_w)
+    y2 = min(loc[1] + sh + pad_y, img_h)
+    crop = screen[y1:y2, x1:x2]
+
+    try:
+        results = get_ocr_reader().readtext(crop, detail=1)
+    except Exception as e:
+        print(f"[OCR] 인식 실패: {e}")
+        return False, ""
+
+    text = "".join(t for _bbox, t, _prob in results)
+    digits = re.findall(r"\d+", text)
+    matched = str(book_num) in digits
+    print(f"[OCR] 인식 텍스트='{text}' digits={digits} 기대값={book_num} → {'일치' if matched else '불일치'}")
+    return matched, text
 
 
 # ROI 생성
