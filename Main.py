@@ -5,6 +5,9 @@ import os
 import subprocess, re
 import logging
 import shutil
+import ctypes
+import tempfile
+from ctypes import wintypes
 from pathlib import Path
 
 from PyQt5 import QtWidgets, QtCore, QtGui
@@ -47,6 +50,23 @@ def get_adb_path():
     else:
         base = os.path.abspath(".")
     return os.path.join(base, "adb", "adb.exe")
+
+
+def get_scrcpy_path():
+    """
+    Return bundled scrcpy.exe path.
+    In development mode, use ./scrcpy/scrcpy.exe.
+    In PyInstaller onefile mode, files are unpacked under sys._MEIPASS.
+    Falls back to scrcpy on PATH.
+    """
+    if hasattr(sys, "_MEIPASS"):
+        base = sys._MEIPASS
+    else:
+        base = os.path.abspath(".")
+    candidate = os.path.join(base, "scrcpy", "scrcpy.exe")
+    if os.path.exists(candidate):
+        return candidate
+    return shutil.which("scrcpy")
 
 
 def run_adb(args, **popen_kwargs):
@@ -2489,6 +2509,9 @@ class MainApp(QtWidgets.QMainWindow):
         self.ui.listView.clicked.connect(self.on_class_item_clicked)
         self.ui.listView_2.clicked.connect(self.on_student_item_clicked)
 
+        # ── Device mirroring (scrcpy) panel setup ──
+        self._setup_mirror_ui()
+
         # ── API pipeline tab setup ──
         self._init_api_pipeline_tab()
         self.ui.pushButton_api_add.clicked.connect(self._api_pipeline_add)
@@ -2498,6 +2521,392 @@ class MainApp(QtWidgets.QMainWindow):
         self.ui.listWidget_api_available.doubleClicked.connect(self._api_pipeline_add)
         self.ui.listWidget_api_pipeline.doubleClicked.connect(self._api_pipeline_remove)
         self.ui.pushButton_api_run.clicked.connect(self.on_run_api_pipeline)
+
+    # ── Device mirroring (scrcpy) ──────────────────────────────────────
+    # 패널 내부에서 미러링 화면이 차지할 수 있는 최대 영역 (mirror_group 기준 좌표)
+    # 가로형 태블릿(16:10)이 높이(749)를 꽉 채우도록 폭을 1200으로 설정 (749*1.6=1198)
+    MIRROR_AREA = QtCore.QRect(10, 22, 1200, 749)
+    LOG_TOP = 795  # 로그 영역 시작 y좌표 (centralwidget 기준)
+
+    # Win32 상수 (scrcpy 창 임베드용)
+    GWL_STYLE = -16
+    WS_CHILD = 0x40000000
+    WS_POPUP = 0x80000000
+    WS_CAPTION = 0x00C00000
+    WS_THICKFRAME = 0x00040000
+    WS_VISIBLE = 0x10000000
+
+    # 클릭 안정화(탭 보정): 미러링 영역에서 클릭 중 이 반경(px) 이내의
+    # 마우스 이동은 차단해서 Android가 드래그로 오인하지 않게 한다
+    WH_MOUSE_LL = 14
+    WM_MOUSEMOVE = 0x0200
+    WM_LBUTTONDOWN = 0x0201
+    WM_LBUTTONUP = 0x0202
+    CLICK_STABILIZE_RADIUS = 12
+
+    def _setup_mirror_ui(self):
+        # 창을 늘리고 로그 영역을 하단 전체 폭으로 이동
+        # (로그 높이는 창 크기를 따라감 → resizeEvent에서 _layout_log_area 호출)
+        self.resize(1960, 1240)
+        self._layout_log_area()
+
+        # 기존 로그 자리에 Device Screen 패널 생성 (미러링 영역 + 좌우 여백 10px)
+        self.mirror_group = QtWidgets.QGroupBox(self.ui.centralwidget)
+        self.mirror_group.setGeometry(QtCore.QRect(730, 8, 1220, 781))
+        self.mirror_group.setTitle("Device Screen")
+        self.mirror_group.setObjectName("groupBox_mirror")
+        self.mirror_placeholder = QtWidgets.QLabel(self.mirror_group)
+        self.mirror_placeholder.setGeometry(self.MIRROR_AREA)
+        self.mirror_placeholder.setAlignment(QtCore.Qt.AlignCenter)
+        self.mirror_placeholder.setText("디바이스를 선택한 후 [미러링] 버튼을 눌러주세요.")
+        self.mirror_placeholder.setStyleSheet("color: #808080; background-color: #1e1e1e;")
+
+        # Select Device 그룹: 새로고침 버튼을 위로 줄이고 아래에 미러링 버튼 추가
+        self.ui.pushButton_6.setGeometry(QtCore.QRect(260, 12, 71, 23))
+        self.pushButton_mirror = QtWidgets.QPushButton(self.ui.groupBox_5)
+        self.pushButton_mirror.setGeometry(QtCore.QRect(260, 37, 71, 23))
+        self.pushButton_mirror.setObjectName("pushButton_mirror")
+        self.pushButton_mirror.setText("미러링")
+        self.pushButton_mirror.clicked.connect(self.on_start_mirror)
+
+        self.scrcpy_proc = None
+        self._mirror_hwnd = None
+        self._mirror_title = None
+        self._mirror_aspect = None
+        self._mirror_find_timer = None
+        self._mirror_find_tries = 0
+        self._mirror_visible_ticks = 0
+        self._mirror_watch_timer = None
+        self._scrcpy_log_file = None
+        self._scrcpy_log_path = None
+        self._mouse_hook = None
+        self._mouse_hook_proc = None
+        self._stab_active = False
+        self._stab_down = (0, 0)
+
+    def _read_scrcpy_log_tail(self, max_chars=600):
+        """scrcpy 출력 로그 파일의 끝부분을 읽어 반환한다."""
+        try:
+            if self._scrcpy_log_file is not None:
+                self._scrcpy_log_file.flush()
+            if self._scrcpy_log_path and os.path.exists(self._scrcpy_log_path):
+                with open(self._scrcpy_log_path, "rb") as f:
+                    data = f.read()
+                return data.decode("utf-8", errors="ignore").strip()[-max_chars:]
+        except Exception:
+            pass
+        return ""
+
+    def _layout_log_area(self):
+        """로그 영역을 창 하단까지 채우도록 배치한다 (창 리사이즈 시에도 호출)."""
+        if not hasattr(self, "ui") or not hasattr(self.ui, "menubar"):
+            return
+        central_h = self.height() - self.ui.menubar.height() - self.statusBar().height()
+        log_h = max(120, central_h - self.LOG_TOP - 10)
+        self.ui.groupBox_6.setGeometry(QtCore.QRect(10, self.LOG_TOP, 1940, log_h))
+        self.ui.plainTextEdit.setGeometry(QtCore.QRect(15, 20, 1910, log_h - 30))
+
+    def resizeEvent(self, event):
+        self._layout_log_area()
+        super().resizeEvent(event)
+
+    def _query_device_aspect(self, serial):
+        """adb wm size로 디바이스 해상도를 조회해 가로/세로 비율을 반환한다."""
+        try:
+            out = run_adb(["-s", serial, "shell", "wm", "size"],
+                          text=True, encoding="utf-8", errors="ignore", timeout=5)
+            m = re.search(r"Override size:\s*(\d+)x(\d+)", out) \
+                or re.search(r"Physical size:\s*(\d+)x(\d+)", out)
+            if m:
+                w, h = int(m.group(1)), int(m.group(2))
+                if w > 0 and h > 0:
+                    self.logger.info(f"디바이스 해상도: {w}x{h}")
+                    return w / h
+        except Exception as e:
+            self.logger.warning(f"디바이스 해상도 조회 실패: {e!r}")
+        return None
+
+    def _fit_mirror_rect(self, aspect):
+        """MIRROR_AREA 안에 aspect 비율을 유지한 최대 크기 사각형(중앙 정렬)을 계산한다."""
+        area = self.MIRROR_AREA
+        w = area.width()
+        h = int(w / aspect)
+        if h > area.height():
+            h = area.height()
+            w = int(h * aspect)
+        x = area.x() + (area.width() - w) // 2
+        y = area.y() + (area.height() - h) // 2
+        return QtCore.QRect(x, y, w, h)
+
+    def on_start_mirror(self):
+        serial = self.ui.comboBox_4.currentData()
+        device_label = self.ui.comboBox_4.currentText()
+        if not serial:
+            self.logger.error("미러링할 디바이스를 선택해주세요.")
+            return
+
+        scrcpy_path = get_scrcpy_path()
+        if not scrcpy_path:
+            self.logger.error("scrcpy.exe를 찾을 수 없습니다. 프로젝트의 scrcpy 폴더를 확인해주세요.")
+            return
+
+        self.stop_mirror()
+        self.mirror_placeholder.setText(f"{device_label}\n미러링 연결 중...")
+
+        self._mirror_aspect = self._query_device_aspect(serial)
+        self._mirror_title = f"WittiMirror_{os.getpid()}_{abs(hash(serial)) % 100000}"
+
+        # 번들 adb를 쓰도록 지정해 scrcpy 내장 adb와의 서버 충돌 방지
+        env = os.environ.copy()
+        env["ADB"] = get_adb_path()
+        # 창 활성화용 첫 클릭도 터치로 전달 (마우스 입력 우선).
+        # scrcpy가 자체적으로도 켜지만 env로 한 번 더 강제한다.
+        # (env가 우선권을 가져서 scrcpy 로그에 "Could not enable mouse focus
+        #  clickthrough" WARN이 뜨는데, 기능은 env 값으로 켜져 있으므로 무해)
+        env["SDL_MOUSE_FOCUS_CLICKTHROUGH"] = "1"
+
+        # Wi-Fi/USB 동일 프로파일 사용.
+        # (사내망 실측: 미러링 중 RTT 평균 9ms, 링크 433Mbps → 대역폭 제한 불필요.
+        #  30fps 제한을 걸면 오히려 움직임이 끊겨 보임)
+        cmd = [
+            scrcpy_path,
+            "-s", str(serial),
+            f"--window-title={self._mirror_title}",
+            "--window-borderless",
+            "--window-x=-10000",
+            "--window-y=-10000",
+            "--max-size=1024",
+            "--no-audio",
+            "--stay-awake",
+        ]
+        # 출력은 임시 파일로 리다이렉트 (PIPE는 버퍼가 차면 scrcpy가 블로킹될 수 있음)
+        self._scrcpy_log_path = os.path.join(
+            tempfile.gettempdir(), f"scrcpy_mirror_{os.getpid()}.log")
+        try:
+            self._scrcpy_log_file = open(self._scrcpy_log_path, "wb")
+            self.scrcpy_proc = subprocess.Popen(
+                cmd,
+                env=env,
+                cwd=os.path.dirname(scrcpy_path),
+                stdout=self._scrcpy_log_file,
+                stderr=subprocess.STDOUT,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+        except Exception as e:
+            self.logger.error(f"scrcpy 실행 실패: {e!r}")
+            self.mirror_placeholder.setText("미러링 실행 실패")
+            return
+
+        self.logger.info(f"scrcpy 시작 (PID={self.scrcpy_proc.pid}, device={device_label})")
+        self.mirror_group.setTitle(f"Device Screen - {device_label}")
+
+        # scrcpy 창이 생성되면 패널 안으로 임베드 (200ms 간격, 최대 20초 대기)
+        self._mirror_find_tries = 0
+        self._mirror_visible_ticks = 0
+        if self._mirror_find_timer is None:
+            self._mirror_find_timer = QtCore.QTimer(self)
+            self._mirror_find_timer.timeout.connect(self._try_embed_mirror)
+        self._mirror_find_timer.start(200)
+
+    def _try_embed_mirror(self):
+        # 창이 뜨기 전에 프로세스가 죽었으면 에러 출력
+        if self.scrcpy_proc is None or self.scrcpy_proc.poll() is not None:
+            self._mirror_find_timer.stop()
+            tail = self._read_scrcpy_log_tail()
+            self.logger.error(f"scrcpy가 종료되었습니다. {tail}")
+            self.stop_mirror()
+            self.mirror_placeholder.setText("미러링 연결 실패 (로그 확인)")
+            return
+
+        user32 = ctypes.windll.user32
+        hwnd = user32.FindWindowW(None, self._mirror_title)
+        if not hwnd:
+            self._mirror_find_tries += 1
+            if self._mirror_find_tries > 100:  # 20초 초과
+                self._mirror_find_timer.stop()
+                self.logger.error("scrcpy 창을 찾지 못했습니다. 미러링을 중단합니다.")
+                self.stop_mirror()
+            return
+
+        # scrcpy 창은 첫 프레임 수신 시점에 표시됨. 렌더러 초기화가 끝나기 전에
+        # reparent/resize하면 scrcpy가 크래시(divide by zero)하므로,
+        # 창이 보이고 나서 3틱(약 0.6초) 더 기다린 뒤 임베드한다.
+        if not user32.IsWindowVisible(wintypes.HWND(hwnd)):
+            self._mirror_find_tries += 1
+            if self._mirror_find_tries > 100:
+                self._mirror_find_timer.stop()
+                self.logger.error("scrcpy 창이 표시되지 않았습니다. 미러링을 중단합니다.")
+                self.stop_mirror()
+            return
+        self._mirror_visible_ticks += 1
+        if self._mirror_visible_ticks < 3:
+            return
+
+        self._mirror_find_timer.stop()
+
+        # scrcpy 창 크기(기기 화면 비율 반영)로 표시 비율 결정, 실패 시 wm size 값 사용
+        rect = wintypes.RECT()
+        user32.GetWindowRect(wintypes.HWND(hwnd), ctypes.byref(rect))
+        win_w, win_h = rect.right - rect.left, rect.bottom - rect.top
+        aspect = self._mirror_aspect or (16 / 10)
+        if win_w > 50 and win_h > 50 and 0.2 < (win_w / win_h) < 5:
+            aspect = win_w / win_h
+
+        # Win32 SetParent로 scrcpy 창을 메인 윈도우 안(패널 위치)에 임베드
+        # 주의: 부모는 반드시 최상위 창(self.winId())이어야 함.
+        #  - Qt createWindowContainer 또는 자식 위젯(winId 강제 생성)에 붙이면
+        #    Qt가 네이티브 창을 재구성하면서 scrcpy(SDL)가 종료됨
+        try:
+            style = user32.GetWindowLongW(wintypes.HWND(hwnd), self.GWL_STYLE)
+            style = (style & ~(self.WS_POPUP | self.WS_CAPTION | self.WS_THICKFRAME)) \
+                | self.WS_CHILD | self.WS_VISIBLE
+            user32.SetWindowLongW(wintypes.HWND(hwnd), self.GWL_STYLE,
+                                  ctypes.c_long(style & 0xFFFFFFFF))
+            user32.SetParent(wintypes.HWND(hwnd), wintypes.HWND(int(self.winId())))
+            geo = self._fit_mirror_rect(aspect)
+            # mirror_group 내부 좌표 → 메인 윈도우 좌표로 변환
+            top_left = self.mirror_group.mapTo(self, geo.topLeft())
+            user32.MoveWindow(wintypes.HWND(hwnd), top_left.x(), top_left.y(),
+                              geo.width(), geo.height(), True)
+            user32.SetFocus(wintypes.HWND(hwnd))  # 키보드 입력도 바로 전달되도록
+            self._mirror_hwnd = hwnd
+            self.mirror_placeholder.hide()
+            self._install_click_stabilizer()
+            self.logger.info("미러링 화면이 패널에 연결되었습니다.")
+        except Exception as e:
+            self.logger.error(f"미러링 창 임베드 실패: {e!r}")
+            self.stop_mirror()
+            return
+
+        # scrcpy 프로세스 종료(기기 분리 등) 감시
+        if self._mirror_watch_timer is None:
+            self._mirror_watch_timer = QtCore.QTimer(self)
+            self._mirror_watch_timer.timeout.connect(self._watch_mirror_proc)
+        self._mirror_watch_timer.start(1000)
+
+    def _point_in_mirror(self, x, y):
+        """화면 좌표 (x, y)가 임베드된 미러링 창 내부인지 확인한다."""
+        user32 = ctypes.windll.user32
+        if not self._mirror_hwnd or not user32.IsWindow(wintypes.HWND(self._mirror_hwnd)):
+            return False
+        rect = wintypes.RECT()
+        user32.GetWindowRect(wintypes.HWND(self._mirror_hwnd), ctypes.byref(rect))
+        return rect.left <= x < rect.right and rect.top <= y < rect.bottom
+
+    def _install_click_stabilizer(self):
+        """미러링 영역 클릭 중 미세한 마우스 이동을 차단하는 low-level 마우스 훅.
+
+        클릭하다 마우스가 몇 px 흔들리면 Android가 탭이 아니라 드래그로
+        인식해서 버튼이 반응하지 않는 문제를 막는다. 반경을 벗어나면
+        이동을 통과시키므로 의도적인 드래그/스크롤은 그대로 동작한다.
+        """
+        if self._mouse_hook:
+            return
+
+        user32 = ctypes.windll.user32
+        HOOKPROC = ctypes.WINFUNCTYPE(
+            ctypes.c_ssize_t, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
+        # 64비트에서 lParam(포인터)이 기본 c_int로 잘려 OverflowError가 나므로
+        # 인자/반환 타입을 명시한다
+        user32.CallNextHookEx.argtypes = [
+            ctypes.c_void_p, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM]
+        user32.CallNextHookEx.restype = ctypes.c_ssize_t
+
+        class MSLLHOOKSTRUCT(ctypes.Structure):
+            _fields_ = [
+                ("pt", wintypes.POINT),
+                ("mouseData", wintypes.DWORD),
+                ("flags", wintypes.DWORD),
+                ("time", wintypes.DWORD),
+                ("dwExtraInfo", ctypes.c_void_p),
+            ]
+
+        r2 = self.CLICK_STABILIZE_RADIUS ** 2
+
+        def _proc(nCode, wParam, lParam):
+            try:
+                if nCode == 0:  # HC_ACTION
+                    info = ctypes.cast(lParam, ctypes.POINTER(MSLLHOOKSTRUCT)).contents
+                    x, y = info.pt.x, info.pt.y
+                    if wParam == self.WM_LBUTTONDOWN:
+                        if self._point_in_mirror(x, y):
+                            self._stab_down = (x, y)
+                            self._stab_active = True
+                    elif wParam == self.WM_MOUSEMOVE and self._stab_active:
+                        dx = x - self._stab_down[0]
+                        dy = y - self._stab_down[1]
+                        if dx * dx + dy * dy <= r2:
+                            return 1  # 미세 이동 차단 → 깨끗한 탭 유지
+                        self._stab_active = False  # 반경 초과 → 드래그로 판단, 통과
+                    elif wParam == self.WM_LBUTTONUP:
+                        self._stab_active = False
+            except Exception:
+                pass
+            return user32.CallNextHookEx(None, nCode, wParam, lParam)
+
+        self._mouse_hook_proc = HOOKPROC(_proc)  # GC 방지를 위해 참조 유지
+        user32.SetWindowsHookExW.restype = ctypes.c_void_p
+        self._mouse_hook = user32.SetWindowsHookExW(
+            self.WH_MOUSE_LL, self._mouse_hook_proc, None, 0)
+        if not self._mouse_hook:
+            self.logger.warning("클릭 안정화 훅 설치 실패 (미러링은 정상 동작)")
+
+    def _uninstall_click_stabilizer(self):
+        if self._mouse_hook:
+            try:
+                ctypes.windll.user32.UnhookWindowsHookEx(
+                    ctypes.c_void_p(self._mouse_hook))
+            except Exception:
+                pass
+            self._mouse_hook = None
+            self._mouse_hook_proc = None
+        self._stab_active = False
+
+    def _watch_mirror_proc(self):
+        if self.scrcpy_proc is not None and self.scrcpy_proc.poll() is not None:
+            tail = self._read_scrcpy_log_tail()
+            self.logger.info(f"미러링이 종료되었습니다 (exit={self.scrcpy_proc.returncode}). {tail}")
+            self.stop_mirror()
+
+    def stop_mirror(self):
+        if self._mirror_find_timer is not None:
+            self._mirror_find_timer.stop()
+        if self._mirror_watch_timer is not None:
+            self._mirror_watch_timer.stop()
+        self._uninstall_click_stabilizer()
+        self._mirror_hwnd = None
+        if self.scrcpy_proc is not None:
+            if self.scrcpy_proc.poll() is None:
+                try:
+                    self.scrcpy_proc.terminate()
+                    self.scrcpy_proc.wait(timeout=3)
+                except Exception:
+                    try:
+                        self.scrcpy_proc.kill()
+                    except Exception:
+                        pass
+            self.scrcpy_proc = None
+        if self._scrcpy_log_file is not None:
+            try:
+                self._scrcpy_log_file.close()
+            except Exception:
+                pass
+            self._scrcpy_log_file = None
+        if self._scrcpy_log_path and os.path.exists(self._scrcpy_log_path):
+            try:
+                os.remove(self._scrcpy_log_path)
+            except Exception:
+                pass
+            self._scrcpy_log_path = None
+        self.mirror_group.setTitle("Device Screen")
+        self.mirror_placeholder.setText("디바이스를 선택한 후 [미러링] 버튼을 눌러주세요.")
+        self.mirror_placeholder.show()
+
+    def closeEvent(self, event):
+        self.stop_mirror()
+        super().closeEvent(event)
+
+    # ── Device mirroring 끝 ────────────────────────────────────────────
 
     def open_report_folder(self):
         project_dir = os.path.abspath(os.getcwd())

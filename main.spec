@@ -42,8 +42,13 @@ adb_datas = []
 if os.path.isdir('adb'):
     adb_datas += collect_datas('adb')
 
+# 3) scrcpy (디바이스 미러링) 포함
+scrcpy_datas = []
+if os.path.isdir('scrcpy'):
+    scrcpy_datas += collect_datas('scrcpy')
+
 # 최종 datas 리스트
-datas = button_datas + apks_datas + stf_datas + adb_datas
+datas = button_datas + apks_datas + stf_datas + adb_datas + scrcpy_datas
 
 a = Analysis(
     ['Main.py'],
