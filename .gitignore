@@ -9,3 +9,4 @@ dist/
 .claude/
 .idea/
 .tmp_*
+scrcpy/
