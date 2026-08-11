@@ -2668,6 +2668,8 @@ class MainApp(QtWidgets.QMainWindow):
         # Wi-Fi/USB 동일 프로파일 사용.
         # (사내망 실측: 미러링 중 RTT 평균 9ms, 링크 433Mbps → 대역폭 제한 불필요.
         #  30fps 제한을 걸면 오히려 움직임이 끊겨 보임)
+        # max-size=1280: 패널 표시 폭(1200px)과 1:1에 가깝게 맞춰 선명도 최대화.
+        # 그 이상은 표시 시 축소되어 화질 이득 없이 인코딩 부하만 증가.
         cmd = [
             scrcpy_path,
             "-s", str(serial),
@@ -2675,7 +2677,8 @@ class MainApp(QtWidgets.QMainWindow):
             "--window-borderless",
             "--window-x=-10000",
             "--window-y=-10000",
-            "--max-size=1024",
+            "--max-size=1280",
+            "--video-bit-rate=12M",
             "--no-audio",
             "--stay-awake",
         ]
