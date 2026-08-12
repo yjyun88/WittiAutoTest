@@ -2,6 +2,7 @@
 
 import sys
 import os
+import json
 import subprocess, re
 import logging
 import shutil
@@ -38,6 +39,20 @@ from request_API import (
     get_tv_main,
     get_teacher_activity_report,
 )
+
+def load_local_config():
+    """
+    gitignore된 local_config.json에서 로컬 전용 설정(테스트 계정 등)을 읽는다.
+    파일이 없으면 빈 dict를 반환한다 (local_config.example.json 참고).
+    """
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "local_config.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
 
 def get_adb_path():
     """
@@ -2494,8 +2509,9 @@ class MainApp(QtWidgets.QMainWindow):
         self.ui.comboBox.setItemData(2, 1, QtCore.Qt.UserRole)   # 한글
         self.ui.comboBox.setItemData(3, 2, QtCore.Qt.UserRole)   # 수학
         self.ui.comboBox.setItemData(4, 3, QtCore.Qt.UserRole)   # 창의
-        self.ui.lineEdit.setText("MGtest000")
-        self.ui.lineEdit_2.setText("***REMOVED***")
+        local_cfg = load_local_config()
+        self.ui.lineEdit.setText(local_cfg.get("USER_ID", ""))
+        self.ui.lineEdit_2.setText(local_cfg.get("USER_PWD", ""))
 
         self.ui.pushButton.clicked.connect(self.close)
         self.ui.pushButton_2.clicked.connect(self.open_report_folder)
@@ -2524,9 +2540,11 @@ class MainApp(QtWidgets.QMainWindow):
 
     # ── Device mirroring (scrcpy) ──────────────────────────────────────
     # 패널 내부에서 미러링 화면이 차지할 수 있는 최대 영역 (mirror_group 기준 좌표)
-    # 가로형 태블릿(16:10)이 높이(749)를 꽉 채우도록 폭을 1200으로 설정 (749*1.6=1198)
-    MIRROR_AREA = QtCore.QRect(10, 22, 1200, 749)
-    LOG_TOP = 795  # 로그 영역 시작 y좌표 (centralwidget 기준)
+    # 가로형 태블릿(16:10)이 높이(671)를 꽉 채우도록 폭을 1078로 설정 (671*1.6=1073.6)
+    MIRROR_AREA = QtCore.QRect(10, 22, 1078, 671)
+    # 로그 영역 시작 y좌표 (centralwidget 기준).
+    # 미러링 패널/탭 영역 하단(y=711, _setup_mirror_ui에서 맞춤) + 여백 6px.
+    LOG_TOP = 717
 
     # Win32 상수 (scrcpy 창 임베드용)
     GWL_STYLE = -16
@@ -2535,24 +2553,42 @@ class MainApp(QtWidgets.QMainWindow):
     WS_CAPTION = 0x00C00000
     WS_THICKFRAME = 0x00040000
     WS_VISIBLE = 0x10000000
-
-    # 클릭 안정화(탭 보정): 미러링 영역에서 클릭 중 이 반경(px) 이내의
-    # 마우스 이동은 차단해서 Android가 드래그로 오인하지 않게 한다
-    WH_MOUSE_LL = 14
-    WM_MOUSEMOVE = 0x0200
+    # 임베드된 scrcpy 창 클릭 감지 → 키보드 포커스 전환용
+    WM_PARENTNOTIFY = 0x0210
     WM_LBUTTONDOWN = 0x0201
-    WM_LBUTTONUP = 0x0202
-    CLICK_STABILIZE_RADIUS = 12
 
     def _setup_mirror_ui(self):
         # 창을 늘리고 로그 영역을 하단 전체 폭으로 이동
         # (로그 높이는 창 크기를 따라감 → resizeEvent에서 _layout_log_area 호출)
-        self.resize(1960, 1240)
+        self.resize(1838, 1162)
         self._layout_log_area()
 
-        # 기존 로그 자리에 Device Screen 패널 생성 (미러링 영역 + 좌우 여백 10px)
+        # 좌측 컨트롤/탭 영역과 미러링 패널의 좌우 자리 교체:
+        # 원래 좌측(x<730)에 있던 centralwidget 직속 위젯들을 오른쪽으로 밀고
+        # Device Screen 패널을 왼쪽에 배치한다 (하단 로그 영역은 전체 폭이라 무관)
+        dx = 1117  # 좌측 여백(10) + 패널 폭(1098) + 패널-탭 간격(9)
+        for w in self.ui.centralwidget.children():
+            if isinstance(w, QtWidgets.QWidget) and w.x() < 730:
+                w.move(w.x() + dx, w.y())
+
+        # 탭 영역 하단(기존 y=791)이 미러링 패널 하단(y=711)과 일치하도록
+        # 리스트 표시 영역(class/student/api)의 높이를 축소
+        shrink = 80
+        self.ui.tabWidget.resize(self.ui.tabWidget.width(),
+                                 self.ui.tabWidget.height() - shrink)
+        # 리스트 그룹박스와 리스트 위젯 높이 축소
+        for w in (self.ui.groupBox_10, self.ui.groupBox_11, self.ui.groupBox_12,
+                  self.ui.groupBox_13, self.ui.listView, self.ui.listView_2,
+                  self.ui.listWidget_api_available, self.ui.listWidget_api_pipeline):
+            w.resize(w.width(), w.height() - shrink)
+        # 리스트 아래에 배치된 위젯들은 같은 폭만큼 위로 이동
+        for w in (self.label_mem_id, self.label_auth_token,
+                  self.ui.groupBox_4, self.ui.groupBox_8, self.ui.pushButton_api_run):
+            w.move(w.x(), w.y() - shrink)
+
+        # Device Screen 패널 생성 (미러링 영역 + 좌우 여백 10px)
         self.mirror_group = QtWidgets.QGroupBox(self.ui.centralwidget)
-        self.mirror_group.setGeometry(QtCore.QRect(730, 8, 1220, 781))
+        self.mirror_group.setGeometry(QtCore.QRect(10, 8, 1098, 703))
         self.mirror_group.setTitle("Device Screen")
         self.mirror_group.setObjectName("groupBox_mirror")
         self.mirror_placeholder = QtWidgets.QLabel(self.mirror_group)
@@ -2579,10 +2615,6 @@ class MainApp(QtWidgets.QMainWindow):
         self._mirror_watch_timer = None
         self._scrcpy_log_file = None
         self._scrcpy_log_path = None
-        self._mouse_hook = None
-        self._mouse_hook_proc = None
-        self._stab_active = False
-        self._stab_down = (0, 0)
 
     def _read_scrcpy_log_tail(self, max_chars=600):
         """scrcpy 출력 로그 파일의 끝부분을 읽어 반환한다."""
@@ -2603,8 +2635,8 @@ class MainApp(QtWidgets.QMainWindow):
             return
         central_h = self.height() - self.ui.menubar.height() - self.statusBar().height()
         log_h = max(120, central_h - self.LOG_TOP - 10)
-        self.ui.groupBox_6.setGeometry(QtCore.QRect(10, self.LOG_TOP, 1940, log_h))
-        self.ui.plainTextEdit.setGeometry(QtCore.QRect(15, 20, 1910, log_h - 30))
+        self.ui.groupBox_6.setGeometry(QtCore.QRect(10, self.LOG_TOP, 1818, log_h))
+        self.ui.plainTextEdit.setGeometry(QtCore.QRect(15, 20, 1788, log_h - 30))
 
     def resizeEvent(self, event):
         self._layout_log_area()
@@ -2668,7 +2700,7 @@ class MainApp(QtWidgets.QMainWindow):
         # Wi-Fi/USB 동일 프로파일 사용.
         # (사내망 실측: 미러링 중 RTT 평균 9ms, 링크 433Mbps → 대역폭 제한 불필요.
         #  30fps 제한을 걸면 오히려 움직임이 끊겨 보임)
-        # max-size=1280: 패널 표시 폭(1200px)과 1:1에 가깝게 맞춰 선명도 최대화.
+        # max-size=1280: 패널 표시 폭(1078px)과 1:1에 가깝게 맞춰 선명도 최대화.
         # 그 이상은 표시 시 축소되어 화질 이득 없이 인코딩 부하만 증가.
         cmd = [
             scrcpy_path,
@@ -2771,10 +2803,9 @@ class MainApp(QtWidgets.QMainWindow):
             top_left = self.mirror_group.mapTo(self, geo.topLeft())
             user32.MoveWindow(wintypes.HWND(hwnd), top_left.x(), top_left.y(),
                               geo.width(), geo.height(), True)
-            user32.SetFocus(wintypes.HWND(hwnd))  # 키보드 입력도 바로 전달되도록
             self._mirror_hwnd = hwnd
+            self._focus_mirror_window()  # 키보드 입력도 바로 전달되도록
             self.mirror_placeholder.hide()
-            self._install_click_stabilizer()
             self.logger.info("미러링 화면이 패널에 연결되었습니다.")
         except Exception as e:
             self.logger.error(f"미러링 창 임베드 실패: {e!r}")
@@ -2787,83 +2818,38 @@ class MainApp(QtWidgets.QMainWindow):
             self._mirror_watch_timer.timeout.connect(self._watch_mirror_proc)
         self._mirror_watch_timer.start(1000)
 
-    def _point_in_mirror(self, x, y):
-        """화면 좌표 (x, y)가 임베드된 미러링 창 내부인지 확인한다."""
-        user32 = ctypes.windll.user32
-        if not self._mirror_hwnd or not user32.IsWindow(wintypes.HWND(self._mirror_hwnd)):
-            return False
-        rect = wintypes.RECT()
-        user32.GetWindowRect(wintypes.HWND(self._mirror_hwnd), ctypes.byref(rect))
-        return rect.left <= x < rect.right and rect.top <= y < rect.bottom
+    def _focus_mirror_window(self):
+        """임베드된 scrcpy 창으로 키보드 포커스를 넘긴다.
 
-    def _install_click_stabilizer(self):
-        """미러링 영역 클릭 중 미세한 마우스 이동을 차단하는 low-level 마우스 훅.
-
-        클릭하다 마우스가 몇 px 흔들리면 Android가 탭이 아니라 드래그로
-        인식해서 버튼이 반응하지 않는 문제를 막는다. 반경을 벗어나면
-        이동을 통과시키므로 의도적인 드래그/스크롤은 그대로 동작한다.
+        scrcpy 창은 다른 프로세스 소유라 SetFocus가 그냥은 실패하므로
+        (SetFocus는 호출 스레드의 입력 큐에 붙은 창에만 동작),
+        AttachThreadInput으로 두 스레드의 입력 큐를 잠시 연결한 뒤 옮긴다.
         """
-        if self._mouse_hook:
-            return
-
         user32 = ctypes.windll.user32
-        HOOKPROC = ctypes.WINFUNCTYPE(
-            ctypes.c_ssize_t, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
-        # 64비트에서 lParam(포인터)이 기본 c_int로 잘려 OverflowError가 나므로
-        # 인자/반환 타입을 명시한다
-        user32.CallNextHookEx.argtypes = [
-            ctypes.c_void_p, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM]
-        user32.CallNextHookEx.restype = ctypes.c_ssize_t
-
-        class MSLLHOOKSTRUCT(ctypes.Structure):
-            _fields_ = [
-                ("pt", wintypes.POINT),
-                ("mouseData", wintypes.DWORD),
-                ("flags", wintypes.DWORD),
-                ("time", wintypes.DWORD),
-                ("dwExtraInfo", ctypes.c_void_p),
-            ]
-
-        r2 = self.CLICK_STABILIZE_RADIUS ** 2
-
-        def _proc(nCode, wParam, lParam):
+        hwnd = self._mirror_hwnd
+        if not hwnd or not user32.IsWindow(wintypes.HWND(hwnd)):
+            return
+        target_tid = user32.GetWindowThreadProcessId(wintypes.HWND(hwnd), None)
+        my_tid = ctypes.windll.kernel32.GetCurrentThreadId()
+        if target_tid == my_tid:
+            user32.SetFocus(wintypes.HWND(hwnd))
+            return
+        if user32.AttachThreadInput(my_tid, target_tid, True):
             try:
-                if nCode == 0:  # HC_ACTION
-                    info = ctypes.cast(lParam, ctypes.POINTER(MSLLHOOKSTRUCT)).contents
-                    x, y = info.pt.x, info.pt.y
-                    if wParam == self.WM_LBUTTONDOWN:
-                        if self._point_in_mirror(x, y):
-                            self._stab_down = (x, y)
-                            self._stab_active = True
-                    elif wParam == self.WM_MOUSEMOVE and self._stab_active:
-                        dx = x - self._stab_down[0]
-                        dy = y - self._stab_down[1]
-                        if dx * dx + dy * dy <= r2:
-                            return 1  # 미세 이동 차단 → 깨끗한 탭 유지
-                        self._stab_active = False  # 반경 초과 → 드래그로 판단, 통과
-                    elif wParam == self.WM_LBUTTONUP:
-                        self._stab_active = False
-            except Exception:
-                pass
-            return user32.CallNextHookEx(None, nCode, wParam, lParam)
+                user32.SetFocus(wintypes.HWND(hwnd))
+            finally:
+                user32.AttachThreadInput(my_tid, target_tid, False)
 
-        self._mouse_hook_proc = HOOKPROC(_proc)  # GC 방지를 위해 참조 유지
-        user32.SetWindowsHookExW.restype = ctypes.c_void_p
-        self._mouse_hook = user32.SetWindowsHookExW(
-            self.WH_MOUSE_LL, self._mouse_hook_proc, None, 0)
-        if not self._mouse_hook:
-            self.logger.warning("클릭 안정화 훅 설치 실패 (미러링은 정상 동작)")
-
-    def _uninstall_click_stabilizer(self):
-        if self._mouse_hook:
-            try:
-                ctypes.windll.user32.UnhookWindowsHookEx(
-                    ctypes.c_void_p(self._mouse_hook))
-            except Exception:
-                pass
-            self._mouse_hook = None
-            self._mouse_hook_proc = None
-        self._stab_active = False
+    def nativeEvent(self, eventType, message):
+        # 임베드된 scrcpy 창(자식)이 클릭되면 부모인 이 창에 WM_PARENTNOTIFY가
+        # 오므로, 이때 키보드 포커스를 scrcpy로 넘긴다.
+        # 다른 Qt 위젯을 클릭하면 Qt가 포커스를 되찾아가므로 자연스럽게 전환된다.
+        if eventType == b"windows_generic_MSG" and getattr(self, "_mirror_hwnd", None):
+            msg = wintypes.MSG.from_address(int(message))
+            if msg.message == self.WM_PARENTNOTIFY \
+                    and (msg.wParam & 0xFFFF) == self.WM_LBUTTONDOWN:
+                self._focus_mirror_window()
+        return super().nativeEvent(eventType, message)
 
     def _watch_mirror_proc(self):
         if self.scrcpy_proc is not None and self.scrcpy_proc.poll() is not None:
@@ -2876,7 +2862,6 @@ class MainApp(QtWidgets.QMainWindow):
             self._mirror_find_timer.stop()
         if self._mirror_watch_timer is not None:
             self._mirror_watch_timer.stop()
-        self._uninstall_click_stabilizer()
         self._mirror_hwnd = None
         if self.scrcpy_proc is not None:
             if self.scrcpy_proc.poll() is None:

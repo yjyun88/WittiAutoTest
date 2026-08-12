@@ -10,3 +10,4 @@ dist/
 .idea/
 .tmp_*
 scrcpy/
+local_config.json

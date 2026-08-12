@@ -1,6 +1,7 @@
 """
 전체 API 응답 테스트 스크립트 (인증/클래스 선택 제외)
-테스트 계정: MGtest000 / ***REMOVED***
+테스트 계정: local_config.json 또는 WITTI_TEST_ID / WITTI_TEST_PWD 환경 변수로 지정
+(local_config.example.json 참고)
 """
 import requests
 import base64
@@ -10,10 +11,27 @@ from datetime import datetime
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 
+
+def _load_local_config():
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "local_config.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+_cfg = _load_local_config()
+
 SERVER = "dev-api"
 BASE = f"https://{SERVER}.wittiverse.com/v2"
-USER_ID = "MGtest000"
-USER_PWD = "***REMOVED***"
+USER_ID = os.environ.get("WITTI_TEST_ID") or _cfg.get("USER_ID", "")
+USER_PWD = os.environ.get("WITTI_TEST_PWD") or _cfg.get("USER_PWD", "")
+if not USER_ID or not USER_PWD:
+    raise SystemExit(
+        "테스트 계정이 설정되지 않았습니다. local_config.json을 만들거나 "
+        "WITTI_TEST_ID / WITTI_TEST_PWD 환경 변수를 지정해주세요.")
 X_DEVICE_INFO = "QW5kcm9pZC4zMzo6OlI5VFgyMDJHNUFFTTo6OlI5VFgyMDJHNUFFTTo6OktOT1g6OjpTTS1YMjE2Ojo6YXBwLjE0Ojo6"
 
 results = []
