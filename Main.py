@@ -2477,13 +2477,13 @@ class MainApp(QtWidgets.QMainWindow):
         ensure_adb_server()
         self.load_devices()
 
-        self.ui.listView_2.setGeometry(QtCore.QRect(10, 20, 301, 352))
+        self.ui.listView_2.setGeometry(QtCore.QRect(10, 20, 291, 352))
         self.label_mem_id = QtWidgets.QLabel(self.ui.groupBox_11)
-        self.label_mem_id.setGeometry(QtCore.QRect(10, 379, 301, 24))
+        self.label_mem_id.setGeometry(QtCore.QRect(10, 379, 291, 24))
         self.label_mem_id.setObjectName("label_mem_id")
         self.label_mem_id.setText("memId: -")
         self.label_auth_token = QtWidgets.QLabel(self.ui.groupBox_11)
-        self.label_auth_token.setGeometry(QtCore.QRect(10, 407, 301, 24))
+        self.label_auth_token.setGeometry(QtCore.QRect(10, 407, 291, 24))
         self.label_auth_token.setObjectName("label_auth_token")
         self.label_auth_token.setText("authToken: -")
 
@@ -2598,9 +2598,9 @@ class MainApp(QtWidgets.QMainWindow):
         self.mirror_placeholder.setStyleSheet("color: #808080; background-color: #1e1e1e;")
 
         # Select Device 그룹: 새로고침 버튼을 위로 줄이고 아래에 미러링 버튼 추가
-        self.ui.pushButton_6.setGeometry(QtCore.QRect(260, 12, 71, 23))
+        self.ui.pushButton_6.setGeometry(QtCore.QRect(449, 12, 71, 23))
         self.pushButton_mirror = QtWidgets.QPushButton(self.ui.groupBox_5)
-        self.pushButton_mirror.setGeometry(QtCore.QRect(260, 37, 71, 23))
+        self.pushButton_mirror.setGeometry(QtCore.QRect(449, 37, 71, 23))
         self.pushButton_mirror.setObjectName("pushButton_mirror")
         self.pushButton_mirror.setText("미러링")
         self.pushButton_mirror.clicked.connect(self.on_start_mirror)
@@ -2713,6 +2713,11 @@ class MainApp(QtWidgets.QMainWindow):
             "--video-bit-rate=12M",
             "--no-audio",
             "--stay-awake",
+            # 숫자/특수문자를 텍스트 주입 대신 키코드로 전송.
+            # SetParent로 임베드된 자식 창은 SDL3가 포커스를 인식하지 못해
+            # text input 이벤트가 발생하지 않으므로 (한글/영문만 입력되고
+            # 숫자/특수문자 입력 불가) raw key event 경로로 우회한다.
+            "--raw-key-events",
         ]
         # 출력은 임시 파일로 리다이렉트 (PIPE는 버퍼가 차면 scrcpy가 블로킹될 수 있음)
         self._scrcpy_log_path = os.path.join(
@@ -3102,11 +3107,6 @@ class MainApp(QtWidgets.QMainWindow):
         )
 
     def load_devices(self):
-        DEVICE_ALIASES = {
-            "R9TX202G5NK": "Galaxy Tab A9+ / AOS 15",
-            "R54Y600EM7T": "Galaxy Tab S10 FE / AOS 15",
-            "R9TX20A57VM": "Galaxy Tab A9+ / AOS 13"
-        }
         try:
             out = run_adb(["devices", "-l"], text=True, encoding="utf-8", errors="ignore", timeout=20)
             lines = [ln for ln in out.strip().splitlines()[1:] if ln.strip()]
@@ -3138,7 +3138,19 @@ class MainApp(QtWidgets.QMainWindow):
 
             items = []
             for k, d in by_serial.items():
-                display_name = DEVICE_ALIASES.get(k, k)
+                e = d.get('usb') or d.get('wifi')
+                model, aos = e['model'], ""
+                try:
+                    props = run_adb(["-s", e['dev_id'], "shell",
+                                     "getprop ro.product.model; getprop ro.build.version.release"],
+                                    text=True, timeout=3).strip().splitlines()
+                    if props: model = props[0].strip() or model
+                    if len(props) >= 2: aos = props[1].strip()
+                except Exception:
+                    pass
+                display_name = model or k
+                if aos: display_name += f" / AOS {aos}"
+                display_name += f" ({k})"
                 if 'usb' in d: items.append((f"{display_name} [USB]", d['usb']['canon']))
                 if 'wifi' in d: items.append((f"{display_name} [Wi-Fi]", d['wifi']['dev_id']))
             if not items: items = [("(no devices)", "")]
