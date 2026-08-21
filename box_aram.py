@@ -20,6 +20,11 @@ BASE_RESOLUTION = (1920, 1200)
 LIST_ROI_REL = (0.02, 0.36, 0.98, 0.86)
 LOW_CANDIDATE_SCORE = 0.45
 PASS_SCORE = 0.60
+# 이미지 매칭 점수가 이 값 이상이면 OCR 검증을 생략한다.
+# 아람 썸네일은 앱이 좌하단에 '생각하기' 오버레이를, 그 위에 콘텐츠 제목을 겹쳐 렌더링해
+# OCR이 두 글자를 섞어 읽는 경우가 있다(예: '생각하기' -> '생각하7하하바').
+# 색/그레이/에지 복합 점수가 충분히 높으면 오탐 위험이 낮으므로 OCR 단계를 건너뛴다.
+OCR_SKIP_SCORE = 0.75
 MAX_SWIPE_ATTEMPTS = 8
 
 before_tpl = Template(r"button_images\aram_cate.png", resolution=BASE_RESOLUTION)
@@ -250,9 +255,13 @@ def _find_and_touch_aram_item(template_path):
         return False
 
     layout_ok = _layout_validate(match["center"], roi_abs)
-    text_hint = extract_text_hint(tpl)
-    ocr_ok, ocr_sim = _ocr_validate(src, match["rect"], text_hint)
     score_ok = match["score"] >= PASS_SCORE
+    ocr_skipped = match["score"] >= OCR_SKIP_SCORE
+    if ocr_skipped:
+        ocr_ok, ocr_sim = True, 1.0
+    else:
+        text_hint = extract_text_hint(tpl)
+        ocr_ok, ocr_sim = _ocr_validate(src, match["rect"], text_hint)
 
     if not score_ok or not layout_ok or not ocr_ok:
         print(
@@ -265,11 +274,13 @@ def _find_and_touch_aram_item(template_path):
         return False
 
     x, y = match["center"]
+    ocr_desc = "skip" if ocr_skipped else f"{ocr_sim:.3f}"
     print(
         f"[MATCH] pass score={match['score']:.3f} color={match['color']:.3f} "
         f"gray={match['gray']:.3f} edge={match['edge']:.3f} "
         f"scale_x={match.get('scale_x', match['scale']):.2f} "
-        f"scale_y={match.get('scale_y', match['scale']):.2f}"
+        f"scale_y={match.get('scale_y', match['scale']):.2f} "
+        f"ocr={ocr_desc}"
     )
     touch((int(x), int(y)))
     sleep(1.0)
