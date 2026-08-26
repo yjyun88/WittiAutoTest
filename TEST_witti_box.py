@@ -10,17 +10,30 @@ from request_API import *
 
 
 # WittiBox content verification
-def check_wittibox(childIds, childNms, authToken, server, inputId):
+def check_wittibox(childIds, childNms, authToken, server, inputId, classId=""):
     child_pairs = list(zip(childIds, childNms))
     if not child_pairs:
         print("[WARN] No child info found. Skip WittiBox verification.")
         return False
 
+    selected_class_id = str(classId or "").strip()
     loop_items = []
     try:
         class_resp = class_list(authToken, inputId, server)
         if class_resp is not None:
             class_items = class_resp.json().get("result", {}).get("classList", [])
+            if selected_class_id:
+                class_items = [
+                    c for c in class_items
+                    if str(c.get("classId", "")).strip() == selected_class_id
+                ]
+                if not class_items:
+                    print(f"[ERROR] selected classId={selected_class_id} not found in class list.")
+                    return False
+                print(f"[INFO] 선택 반만 테스트 (classId={selected_class_id})")
+            else:
+                print("[INFO] 전체 반 테스트")
+
             for cls in class_items:
                 class_id = str(cls.get("classId", "")).strip()
                 class_nm = str(cls.get("classNm", "")).strip()

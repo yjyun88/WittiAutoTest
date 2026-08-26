@@ -47,8 +47,15 @@ scrcpy_datas = []
 if os.path.isdir('scrcpy'):
     scrcpy_datas += collect_datas('scrcpy')
 
+# 4) 로컬 설정(테스트 계정 기본값) 포함
+#    gitignore 대상이라 없는 환경도 있으므로 존재할 때만 넣는다.
+#    exe 옆에 같은 이름의 파일을 두면 그쪽이 우선 적용된다 (load_local_config 참고).
+config_datas = []
+if os.path.isfile('local_config.json'):
+    config_datas.append(('local_config.json', '.'))
+
 # 최종 datas 리스트
-datas = button_datas + apks_datas + stf_datas + adb_datas + scrcpy_datas
+datas = button_datas + apks_datas + stf_datas + adb_datas + scrcpy_datas + config_datas
 
 a = Analysis(
     ['Main.py'],

@@ -40,18 +40,48 @@ from request_API import (
     get_teacher_activity_report,
 )
 
+# PyInstaller windowed 빌드(console=False)에서 adb.exe/scrcpy.exe 같은 콘솔 프로그램을
+# 실행하면 검은 콘솔 창이 순간적으로 떴다 사라진다. subprocess 기본값에
+# CREATE_NO_WINDOW를 주입해 앱/airtest 내부 호출까지 모두 창 없이 실행한다.
+if sys.platform == "win32":
+    _CREATE_NO_WINDOW = 0x08000000
+    _orig_popen_init = subprocess.Popen.__init__
+
+    def _popen_init_no_window(self, *args, **kwargs):
+        if not kwargs.get("creationflags"):
+            kwargs["creationflags"] = _CREATE_NO_WINDOW
+        _orig_popen_init(self, *args, **kwargs)
+
+    subprocess.Popen.__init__ = _popen_init_no_window
+
+
 def load_local_config():
     """
     gitignore된 local_config.json에서 로컬 전용 설정(테스트 계정 등)을 읽는다.
     파일이 없으면 빈 dict를 반환한다 (local_config.example.json 참고).
+
+    탐색 순서 (앞의 것이 우선):
+      1) exe(또는 스크립트)가 놓인 폴더  → 배포 후 계정을 바꿔 쓸 수 있게
+      2) PyInstaller 번들 내부(_MEIPASS) → 빌드 시 포함된 기본값
+    onefile 빌드에서 __file__은 임시 해제 폴더를 가리키므로
+    __file__만 보면 exe 옆에 둔 설정 파일을 영영 못 찾는다.
     """
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                        "local_config.json")
-    try:
-        with open(path, encoding="utf-8") as f:
-            return json.load(f)
-    except (OSError, ValueError):
-        return {}
+    candidates = []
+    if getattr(sys, "frozen", False):
+        candidates.append(os.path.dirname(sys.executable))
+        if hasattr(sys, "_MEIPASS"):
+            candidates.append(sys._MEIPASS)
+    else:
+        candidates.append(os.path.dirname(os.path.abspath(__file__)))
+
+    for base in candidates:
+        path = os.path.join(base, "local_config.json")
+        try:
+            with open(path, encoding="utf-8") as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            continue
+    return {}
 
 
 def get_adb_path():
@@ -96,14 +126,12 @@ def run_adb(args, **popen_kwargs):
 
 def ensure_adb_server():
     """
-    Restart bundled adb server to avoid conflicts.
+    Ensure bundled adb server is running.
+    kill-server는 하지 않는다. 다른 인스턴스가 테스트 중일 때 서버를 죽이면
+    Wi-Fi 연결 기기가 떨어지고 미러링(scrcpy) 터널도 끊긴다.
+    이미 서버가 떠 있으면 start-server는 아무 동작도 하지 않는다.
     Failures are ignored to keep app flow running.
     """
-    try:
-        subprocess.check_output([get_adb_path(), "kill-server"],
-                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except Exception:
-        pass
     try:
         subprocess.check_output([get_adb_path(), "start-server"],
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -165,6 +193,7 @@ def worker_main(
     study_access_mem_nm,
     study_access_mem_id,
     study_access_auth_token,
+    selected_class_id="",
 ):
     import builtins, traceback
     def _print_via_queue(*args, sep=" ", end="\n", **kwargs):
@@ -188,6 +217,7 @@ def worker_main(
             study_access_mem_nm,
             study_access_mem_id,
             study_access_auth_token,
+            selected_class_id,
         )
     except Exception as e:
         print(f"[ERROR] AutoTest_Start 중 예외: {e!r}")
@@ -474,7 +504,7 @@ def worker_study_access_bulk(log_queue, user_id, user_pwd, server, device_label)
         print(traceback.format_exc())
 
 
-def worker_curriculum_bulk(log_queue, user_id, user_pwd, server, device_label):
+def worker_curriculum_bulk(log_queue, user_id, user_pwd, server, device_label, class_id=""):
     env_code = {
         "Prod": "PRD",
         "QA": "QA",
@@ -515,7 +545,16 @@ def worker_curriculum_bulk(log_queue, user_id, user_pwd, server, device_label):
 
         class_data = class_resp.json()
         classes = class_data.get("result", {}).get("classList", [])
-        print(f"[INFO] classes loaded: {len(classes)}")
+
+        selected_class_id = str(class_id or "").strip()
+        if selected_class_id:
+            classes = [c for c in classes if str(c.get("classId", "")).strip() == selected_class_id]
+            if not classes:
+                print(f"[ERROR] selected classId={selected_class_id} not found in class list.")
+                return
+            print(f"[INFO] classes loaded: {len(classes)} (선택 반: {selected_class_id})")
+        else:
+            print(f"[INFO] classes loaded: {len(classes)} (전체 반)")
 
         report_path, wb, ws = init_api_report("curriculum_result", user_id)
 
@@ -2509,6 +2548,14 @@ class MainApp(QtWidgets.QMainWindow):
         self.ui.comboBox.setItemData(2, 1, QtCore.Qt.UserRole)   # 한글
         self.ui.comboBox.setItemData(3, 2, QtCore.Qt.UserRole)   # 수학
         self.ui.comboBox.setItemData(4, 3, QtCore.Qt.UserRole)   # 창의
+        # STEP: index1=ALL(0), index2=STEP1, index3=STEP2
+        self.ui.comboBox_2.setItemData(1, 0, QtCore.Qt.UserRole)   # ALL
+        self.ui.comboBox_2.setItemData(2, 1, QtCore.Qt.UserRole)   # STEP 1
+        self.ui.comboBox_2.setItemData(3, 2, QtCore.Qt.UserRole)   # STEP 2
+        # 호: index1=ALL(0), index2~14 = 1~13호
+        self.ui.comboBox_3.setItemData(1, 0, QtCore.Qt.UserRole)   # ALL
+        for _i in range(1, 14):
+            self.ui.comboBox_3.setItemData(_i + 1, _i, QtCore.Qt.UserRole)
         local_cfg = load_local_config()
         self.ui.lineEdit.setText(local_cfg.get("USER_ID", ""))
         self.ui.lineEdit_2.setText(local_cfg.get("USER_PWD", ""))
@@ -2960,6 +3007,11 @@ class MainApp(QtWidgets.QMainWindow):
 
             self.class_list_model.clear()
             self.student_list_model.clear()
+
+            all_item = QtGui.QStandardItem("ALL")
+            all_item.setData("", QtCore.Qt.UserRole)
+            self.class_list_model.appendRow(all_item)
+
             for cls in classes:
                 class_nm = str(cls.get("classNm", "")).strip() or "-"
                 target_age = str(cls.get("targetAge", "")).strip() or "-"
@@ -2974,17 +3026,18 @@ class MainApp(QtWidgets.QMainWindow):
             self.logger.error(f"Class List 파싱 실패: {e!r}")
 
     def _auto_select_first_class_and_student(self):
-        if self.class_list_model.rowCount() <= 0:
+        if self.class_list_model.rowCount() <= 1:
             self.logger.warning("Auto select skipped: class list is empty.")
             return
 
-        first_class_index = self.class_list_model.index(0, 0)
-        if not first_class_index.isValid():
-            self.logger.warning("Auto select skipped: invalid first class index.")
+        # 기본 선택은 최상위 "ALL" (index 0) — 전체 반 순회가 기본 동작
+        all_index = self.class_list_model.index(0, 0)
+        if not all_index.isValid():
+            self.logger.warning("Auto select skipped: invalid ALL index.")
             return
 
-        self.ui.listView.setCurrentIndex(first_class_index)
-        self.on_class_item_clicked(first_class_index)
+        self.ui.listView.setCurrentIndex(all_index)
+        self.on_class_item_clicked(all_index)
 
         if self.student_list_model.rowCount() <= 0:
             self.logger.warning("Auto select skipped: student list is empty.")
@@ -2997,18 +3050,40 @@ class MainApp(QtWidgets.QMainWindow):
 
         self.ui.listView_2.setCurrentIndex(first_student_index)
         self.on_student_item_clicked(first_student_index)
-        self.logger.info("Auto-selected first class and first student.")
+        self.logger.info("Auto-selected ALL class and first student.")
 
     def on_class_item_clicked(self, index):
         class_id = index.data(QtCore.Qt.UserRole)
-        if not class_id:
+        if class_id is None:
             self.logger.warning("선택한 클래스의 classId를 찾을 수 없습니다.")
             return
+
+        if class_id == "":
+            # "ALL" 선택: 특정 반이 아닌 전체 반 순회를 의미.
+            # 단, study/access 토큰 확보용으로 첫 반의 학생 목록은 그대로 채워둔다.
+            self.selected_class_id = ""
+            self.selected_class_nm = "ALL"
+            self.selected_target_age = ""
+            self.logger.info("클래스 선택: ALL (전체 반 대상)")
+            first_class_id = ""
+            if self.class_list_model.rowCount() > 1:
+                first_class_id = str(
+                    self.class_list_model.index(1, 0).data(QtCore.Qt.UserRole) or ""
+                ).strip()
+            if first_class_id:
+                self._load_student_list(first_class_id)
+            else:
+                self.student_list_model.clear()
+            return
+
         # 선택된 class 정보 저장
         self.selected_class_id = class_id
         display = index.data(QtCore.Qt.DisplayRole) or ""
         self.selected_class_nm = display.split(" / ")[0] if " / " in display else display
         self.selected_target_age = display.split(" / ")[1] if " / " in display else ""
+        self._load_student_list(class_id)
+
+    def _load_student_list(self, class_id):
         if not self.class_auth_token or not self.class_api_server:
             self.logger.error("학생 목록 조회 실패: authToken/server 정보가 없습니다. 먼저 Class List를 조회해주세요.")
             return
@@ -3171,8 +3246,8 @@ class MainApp(QtWidgets.QMainWindow):
         inputId     = self.ui.lineEdit.text().strip()
         inputPwd    = self.ui.lineEdit_2.text().strip()
         subjCd      = self.ui.comboBox.currentData()
-        itemCd      = self.ui.comboBox_2.currentIndex()
-        curtnSeq    = self.ui.comboBox_3.currentIndex()
+        itemCd      = self.ui.comboBox_2.currentData()
+        curtnSeq    = self.ui.comboBox_3.currentData()
         btn_name    = self.sender().objectName()
         title_name  = self.ui.comboBox_5.currentText()
         server      = self.ui.comboBox_6.currentText()
@@ -3206,6 +3281,7 @@ class MainApp(QtWidgets.QMainWindow):
             self.study_access_mem_nm,
             self.study_access_mem_id,
             self.study_access_auth_token,
+            str(self.selected_class_id or "").strip(),
         )
         self.worker_process = Process(target=worker_main, args=args)
         self.worker_process.start()
@@ -3408,10 +3484,12 @@ class MainApp(QtWidgets.QMainWindow):
 
         self.log_queue = Queue()
         device_label = self.ui.comboBox_4.currentText()
-        args = (self.log_queue, user_id, user_pwd, server, device_label)
+        selected_class_id = str(self.selected_class_id or "").strip()
+        args = (self.log_queue, user_id, user_pwd, server, device_label, selected_class_id)
         self.worker_process = Process(target=worker_curriculum_bulk, args=args)
         self.worker_process.start()
-        self.logger.info(f"curriculum bulk 프로세스 시작 (PID={self.worker_process.pid})")
+        target_desc = f"반 {self.selected_class_nm}({selected_class_id})" if selected_class_id else "전체 반"
+        self.logger.info(f"curriculum bulk 프로세스 시작 (PID={self.worker_process.pid}, 대상={target_desc})")
 
         if self._drain_timer is None:
             self._drain_timer = QtCore.QTimer(self)
