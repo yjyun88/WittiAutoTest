@@ -59,14 +59,17 @@ def _tap_center_until(template, center_x, center_y, *, attempts=4, wait_sec=1.0)
     return False
 
 
-# 위티스쿨 > 아람북월드 컨텐츠 검증
-def check_wittiaram(width, height, authToken, subjCd, itemCd, curtnSeq, server):
+# 광장 → 위티스쿨 → 아람북월드 → 과목 진입
+def enter_aram_subject(subjCd, width, height):
+    # 화면 중앙 좌표
+    center_x, center_y = width // 2, height // 2
 
     #광장에서 스쿨 진입
     _touch_required(menu_tpl, threshold=0.62)
     _touch_required(school_tpl, threshold=0.60)
     sleep(2)
-    _touch_required(center_tpl, threshold=0.60, max_retries=4, wait_sec=1.0)
+    # 인트로/대화 넘기기용 중앙 탭 (해상도 무관하게 좌표로 처리)
+    _tap_center_until(enter_tpl, center_x, center_y, attempts=4, wait_sec=1.0)
 
     # 스쿨 진입 후 아람북월드 진입
     _touch_required(enter_tpl, threshold=0.60)
@@ -79,6 +82,49 @@ def check_wittiaram(width, height, authToken, subjCd, itemCd, curtnSeq, server):
         _touch_required(aram_science_tpl, threshold=0.60)
     sleep(5)
 
+
+# 아람북월드 → 광장으로 나가기
+def exit_aram_to_plaza():
+    """
+    광장까지 복귀하고, 실제로 도달했는지를 bool로 반환한다.
+
+    예전에는 목록 화면 전용 시퀀스를 무조건 실행했기 때문에,
+    컨텐츠 화면에 갇힌 상태에서는 나가기 버튼이 없어 반드시 실패했고
+    호출한 쪽은 그 실패를 알 수 없어 이후 항목들이 줄줄이 무너졌다.
+    """
+    print("아람북월드 컨텐츠 검증 종료, 광장으로 이동합니다.")
+
+    if exists(menu_tpl):
+        print("[Info] 이미 광장 화면입니다.")
+        return True
+
+    # 컨텐츠 안이라면 먼저 호 목록까지 나온다 (목록에 나가기 버튼이 있다)
+    if not ensure_back_to_list():
+        print("[WARN] 호 목록 복귀 실패 → 광장 나가기 시퀀스를 그대로 시도합니다")
+
+    try:
+        touch_template(exit_tpl_2)
+        wait(exit_tpl, timeout=60)
+        touch_template(exit_tpl)
+        wait(exit_y_tpl, timeout=60)
+        touch_template(exit_y_tpl)
+    except Exception as e:
+        print(f"[WARN] 광장 나가기 시퀀스 실패: {e}")
+
+    sleep(2)
+    ok = bool(exists(menu_tpl))
+    print(f"[Info] 광장 복귀 {'성공' if ok else '실패'}")
+    return ok
+
+
+# 위티스쿨 > 아람북월드 컨텐츠 검증
+# do_enter/do_exit: ALL 모드에서 같은 과목을 연속 진행할 때 진입/나가기를 생략하기 위한 플래그
+def check_wittiaram(width, height, authToken, subjCd, itemCd, curtnSeq, server,
+                    do_enter=True, do_exit=True, do_select_step=True):
+
+    if do_enter:
+        enter_aram_subject(subjCd, width, height)
+
     # 커리큘럼 정보 가져오기
     bookNm, subjCd, act_items = get_school_aram_content(authToken, subjCd, itemCd, curtnSeq, server)
     print(f"{subjCd} / STEP {itemCd} / {curtnSeq} 호 컨텐츠 명 : ", bookNm)
@@ -87,7 +133,8 @@ def check_wittiaram(width, height, authToken, subjCd, itemCd, curtnSeq, server):
     saved_files = download_thumbnails(act_items, output_dir="downloaded_images/school_aram")
 
     # STEP 선택 / N 호 서치하여 좌표 반환
-    x, y = select_step(step_num=itemCd, book_num=curtnSeq, width=width, height=height)
+    x, y = select_step(step_num=itemCd, book_num=curtnSeq, width=width, height=height,
+                       touch_step=do_select_step)
 
     # ROI 영역 설정 및 좌표 반환, 이미지 저장
     roi, top = create_roi(find_y=y, subjCd=subjCd, itemCd=itemCd, curtnSeq=curtnSeq)
@@ -95,13 +142,13 @@ def check_wittiaram(width, height, authToken, subjCd, itemCd, curtnSeq, server):
     # 컨텐츠 리스트 선택 & 엑셀 결과 기입
     match_and_touch_roi(roi, top, subjCd, curtnSeq, act_items, saved_files)
 
-    # 광장으로 나가기
-    print("아람북월드 컨텐츠 검증 종료, 광장으로 이동합니다.")
-    touch_template(exit_tpl_2)
-    wait(exit_tpl, timeout=60)
-    touch_template(exit_tpl)
-    wait(exit_y_tpl, timeout=60)
-    touch_template(exit_y_tpl)
+    # 광장으로 나가기 (ALL 모드에서 같은 과목이 이어지면 생략)
+    if do_exit:
+        # 복귀 실패를 방치하면 다음 과목이 엉뚱한 화면에서 시작된다
+        if not exit_aram_to_plaza():
+            raise RuntimeError("컨텐츠 검증은 끝났으나 광장으로 복귀하지 못했습니다")
+    else:
+        print("아람북월드 유지 (다음 항목 이어서 진행)")
 
 
 # MEW 컨텐츠 검증

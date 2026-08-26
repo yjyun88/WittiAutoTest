@@ -319,6 +319,11 @@ Clear</string>
        </item>
        <item>
         <property name="text">
+         <string notr="true">ALL</string>
+        </property>
+       </item>
+       <item>
+        <property name="text">
          <string>1</string>
         </property>
        </item>
@@ -333,13 +338,18 @@ Clear</string>
         <rect>
          <x>170</x>
          <y>20</y>
-         <width>41</width>
+         <width>50</width>
          <height>22</height>
         </rect>
        </property>
        <item>
         <property name="text">
          <string notr="true">호</string>
+        </property>
+       </item>
+       <item>
+        <property name="text">
+         <string notr="true">ALL</string>
         </property>
        </item>
        <item>

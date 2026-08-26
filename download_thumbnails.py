@@ -1,5 +1,6 @@
 import os
 import requests
+import time
 import shutil
 import stat
 import re
@@ -180,6 +181,10 @@ def cleanup_thumbnails():
 
 
 # 위티월드 아람 컨텐츠 썸네일 다운로드
+# 썸네일 다운로드 재시도 횟수. 1회 실패로 항목이 비면 리포트에 이미지가 누락된다.
+DOWNLOAD_RETRIES = 3
+
+
 def download_thumbnails(
         act_items, 
         output_dir
@@ -187,7 +192,11 @@ def download_thumbnails(
     """
     act_items: list of dicts, each with keys "actTag" and "contsUrl"
     output_dir: directory where thumbnails will be saved
-    Returns a list of file paths that were successfully downloaded.
+
+    Returns a list with the SAME length and order as act_items.
+    실패한 항목은 None으로 자리를 채운다. 예전처럼 건너뛰면 act_items와의
+    1:1 대응이 깨져서, 마지막 항목이 실패하면 IndexError가 나고
+    중간 항목이 실패하면 이후 썸네일이 한 칸씩 밀려 엉뚱한 이미지가 기록된다.
     """
     os.makedirs(output_dir, exist_ok=True)
     saved_files = []
@@ -196,7 +205,8 @@ def download_thumbnails(
         tag = item.get("actTag", f"item{idx}")
         url = item.get("contsThumbUrl")
         if not url:
-            print(f"[WARN] No URL for {tag!r}, skipping")
+            print(f"[WARN] No URL for {tag!r}, placeholder appended")
+            saved_files.append(None)
             continue
 
         # 1) 안전한 파일명 만들기 (태그를 알파벳/숫자/언더바만 허용)
@@ -213,15 +223,23 @@ def download_thumbnails(
         filename = f"{idx:02d}_{safe_tag}{ext}"
         filepath = os.path.join(output_dir, filename)
 
-        # 4) 다운로드 시도
-        try:
-            resp = requests.get(url, timeout=10)
-            resp.raise_for_status()
-            with open(filepath, "wb") as f:
-                f.write(resp.content)
-            print(f"[OK] Saved thumbnail for {tag!r} → {filepath}")
-            saved_files.append(filepath)
-        except Exception as e:
-            print(f"[ERROR] Failed to download {url!r}: {e}")
+        # 4) 다운로드 시도 (일시적인 네트워크/CDN 오류를 대비해 재시도)
+        for attempt in range(1, DOWNLOAD_RETRIES + 1):
+            try:
+                resp = requests.get(url, timeout=10)
+                resp.raise_for_status()
+                with open(filepath, "wb") as f:
+                    f.write(resp.content)
+                print(f"[OK] Saved thumbnail for {tag!r} → {filepath}")
+                saved_files.append(filepath)
+                break
+            except Exception as e:
+                print(f"[ERROR] Failed to download {url!r} "
+                      f"(attempt {attempt}/{DOWNLOAD_RETRIES}): {e}")
+                if attempt < DOWNLOAD_RETRIES:
+                    time.sleep(1.5)
+        else:
+            print(f"[WARN] {tag!r} 썸네일 다운로드 최종 실패, placeholder appended")
+            saved_files.append(None)
 
     return saved_files
