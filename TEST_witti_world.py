@@ -82,6 +82,11 @@ def enter_aram_subject(subjCd, width, height):
     sleep(5)
 
 
+# 광장 복귀를 기다리는 한계 시간. 나가기 버튼을 다 누른 뒤의 로딩만 기다리므로
+# 넉넉해도 정상 흐름에서는 도착하는 즉시 빠져나온다.
+PLAZA_RETURN_TIMEOUT = 30
+
+
 # 아람북월드 → 광장으로 나가기
 def exit_aram_to_plaza():
     """
@@ -122,10 +127,21 @@ def exit_aram_to_plaza():
     except Exception as e:
         print(f"[WARN] 광장 나가기 시퀀스 실패: {e}")
 
-    sleep(2)
-    ok = bool(exists(menu_tpl))
-    print(f"[Info] 광장 복귀 {'성공' if ok else '실패'}")
-    return ok
+    # 예전에는 2초만 쉬고 한 번 확인해서, 광장 로딩이 그보다 길면 도착했는데도
+    # 실패로 단정했다. 검증이 다 끝난 항목이 화면 전환을 못 기다렸다는 이유로
+    # FAIL이 되고, 바로 뒤 복구 경로에서는 "이미 광장"이 나오는 모순이 있었다.
+    # 위쪽 진입 판정과 같은 기준(2회 연속 일치)으로 도착을 기다린다.
+    deadline = pytime.time() + PLAZA_RETURN_TIMEOUT
+    while pytime.time() < deadline:
+        if exists(menu_tpl):
+            sleep(1)
+            if exists(menu_tpl):
+                print("[Info] 광장 복귀 성공")
+                return True
+            continue
+        sleep(1)
+    print("[Info] 광장 복귀 실패")
+    return False
 
 
 # 위티스쿨 > 아람북월드 컨텐츠 검증
