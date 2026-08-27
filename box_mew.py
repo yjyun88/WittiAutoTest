@@ -224,7 +224,6 @@ def _find_and_touch_mew_item(template_path):
     text_hint = _filename_hint_text(template_path) or extract_text_hint(tpl)
     accepted = None
     accepted_log = ""
-    fallback = None
     fallback_rank = -1.0
     fallback_log = ""
 
@@ -246,7 +245,6 @@ def _find_and_touch_mew_item(template_path):
         )
 
         if final_score > fallback_rank:
-            fallback = cand
             fallback_rank = final_score
             fallback_log = cand_log
 

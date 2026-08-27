@@ -26,7 +26,6 @@ REPORT_HEADERS = [
 ]
 
 SUMMARY_SHEET_NAME = "Summary"
-SAVE_EVERY_N_ROWS = 10
 IMAGE_PX = 200
 
 # Runtime caches to reduce repeated IO and image recompression
@@ -55,16 +54,6 @@ def _status_style(status):
     return Font(), PatternFill(fill_type=None)
 
 
-def _normalize_server_api(server_env):
-    mapping = {
-        "Prod": "api",
-        "QA": "qa-api",
-        "Dev": "dev-api",
-        "Total-Test": "total-test-api",
-    }
-    return mapping.get(server_env, server_env)
-
-
 def _infer_step(class_name, content_name):
     cn = (class_name or "").upper()
     cont = (content_name or "").upper()
@@ -78,17 +67,6 @@ def _infer_step(class_name, content_name):
 def _get_header_map(ws):
     header_row = next(ws.iter_rows(min_row=1, max_row=1))
     return {str(cell.value): cell.column for cell in header_row if cell.value}
-
-
-def _format_duration_hms(total_seconds):
-    try:
-        total_seconds = int(round(float(total_seconds or 0)))
-    except Exception:
-        total_seconds = 0
-    hours = total_seconds // 3600
-    minutes = (total_seconds % 3600) // 60
-    seconds = total_seconds % 60
-    return f"{hours}시간 {minutes}분 {seconds}초"
 
 
 def _quote_sheet_title(title):
@@ -403,18 +381,6 @@ def _flush_report(file_path):
     ctx["pending_rows"] = 0
 
 
-def flush_all_reports():
-    for file_path in list(_REPORT_CACHE.keys()):
-        try:
-            _flush_report(file_path)
-        except Exception as e:
-            # During interpreter shutdown, workbook/image internals may already be closed.
-            if "closed file" in str(e).lower():
-                continue
-            print(f"[WARN] Failed to flush report {file_path}: {e}")
-
-
-
 def create_report():
     """
     Create/load monthly workbook and return today's sheet.
@@ -481,11 +447,9 @@ def input_excel(
     thumb_path,
     width=IMAGE_PX,
     height=IMAGE_PX,
-    padding_chars=2,
     test_time=None,
     device=None,
     server_env=None,
-    server_api=None,
     step=None,
     error_message=None,
     duration_sec=None,

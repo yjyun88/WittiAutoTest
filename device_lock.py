@@ -96,10 +96,6 @@ def read_holder(serial):
         return {}
 
 
-def is_locked(serial):
-    return read_holder(serial) is not None
-
-
 def describe_holder(serial):
     """목록에 덧붙일 '사용 중' 문구. 잠겨 있지 않으면 빈 문자열."""
     holder = read_holder(serial)

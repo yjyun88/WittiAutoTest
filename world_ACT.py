@@ -14,7 +14,6 @@ from check_video import is_video_playing
 from create_report import create_report, input_excel
 
 BASE_RESOLUTION = (1920, 1200)
-BASE_RESOLUTION2 = (2304, 1440)
 
 # 템플릿 미리 로드
 step_templates = {
@@ -34,7 +33,6 @@ aram_exit_tpl = Template(r"button_images\aram_exit.png", resolution=BASE_RESOLUT
 aram_loading = Template(r"button_images\witti_world\aram_loading.png",
                         threshold=0.70, resolution=BASE_RESOLUTION)
 play_tpl_2 = Template(r"button_images\play.png", resolution=BASE_RESOLUTION)
-#recorded_res = (1440, 2304)
 action_templates = {
     action: Template(
         os.path.join(r"button_images\witti_world", f"{action}.png"),

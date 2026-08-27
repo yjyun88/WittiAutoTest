@@ -9,7 +9,6 @@ BASE_RESOLUTION = (1920, 1200)
 
 menu_tpl = Template(r"button_images\witti_world\witti_menu_temp2.png", resolution=BASE_RESOLUTION)
 school_tpl = Template(r"button_images\witti_world\witti_school_temp.png", resolution=BASE_RESOLUTION)
-tv_tpl = Template(r"button_images\witti_world\witti_tv.png", resolution=BASE_RESOLUTION)
 enter_tpl = Template(r"button_images\witti_world\witti_enter.png", resolution=BASE_RESOLUTION)
 aram_tpl = Template(r"button_images\witti_world\school_aram.png", resolution=BASE_RESOLUTION)
 aram_korean_tpl = Template(r"button_images\witti_world\school_aram_kor.png", resolution=BASE_RESOLUTION)
@@ -28,7 +27,6 @@ exit_y_tpl = Template(r"button_images\witti_world\school_exit_y.png", resolution
 mew_after_tpl = Template(r"button_images\mew_down.png", resolution=BASE_RESOLUTION)
 mew_after_tpl_2 = Template(r"button_images\mew_down_9.png", resolution=BASE_RESOLUTION, threshold=0.8)
 mew_home_tpl = Template(r"button_images\mew_home.png", resolution=BASE_RESOLUTION)
-center_tpl = Template(r"button_images\witti_world\center.png", resolution=BASE_RESOLUTION)
 
 
 def _touch_required(template, *, threshold=0.65, max_retries=12, wait_sec=2.0, region_code=5, after_touch_sleep=1.0):

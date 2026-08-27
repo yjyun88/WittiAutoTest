@@ -3,8 +3,7 @@
 adb 연결 끊김 감지 / 재연결.
 
 adb 서버는 실행 중인 모든 인스턴스가 공유하는 자원이라, 외부 요인(서버 재시작,
-USB 재인증, 다른 툴의 개입)으로 언제든 끊길 수 있다. 끊기면 airtest의 screencap은
-AdbError(stdout=b'', stderr=b'')로, minitouch는 ConnectionResetError로 터진다.
+USB 재인증, 다른 툴의 개입)으로 언제든 끊길 수 있다.
 
 문제는 그 다음이다. 끊긴 상태에서 exists()가 던진 예외를 "화면을 못 찾았다"로
 오해하면 복구 로직이 엉뚱한 판단을 내리고 이후 항목이 줄줄이 무너진다.
@@ -13,7 +12,6 @@ AdbError(stdout=b'', stderr=b'')로, minitouch는 ConnectionResetError로 터진
 import time
 
 from airtest.core.api import connect_device
-from airtest.core.error import AdbError, DeviceConnectionError
 from airtest.core.helper import G
 
 # connect_device에 쓴 URI. 재연결 시 동일 옵션(cap_method 등)으로 다시 붙어야 한다.
@@ -29,28 +27,6 @@ def set_device_uri(uri):
     """connect_device 직후 호출. 재연결에 쓸 URI를 기억한다."""
     global _DEVICE_URI
     _DEVICE_URI = uri
-
-
-def is_disconnect_error(exc):
-    """
-    예외가 'adb 연결이 끊겼다'를 뜻하는지 판별한다.
-
-    끊김과 단순 실패를 구분하지 못하면 멀쩡한 실패에도 재연결을 돌려
-    시간만 버리게 되므로, 끊김 특유의 신호만 본다.
-    """
-    if isinstance(exc, (ConnectionResetError, ConnectionAbortedError,
-                        BrokenPipeError, DeviceConnectionError)):
-        return True
-    if isinstance(exc, AdbError):
-        # 기기가 사라진 상태의 screencap은 stdout/stderr가 모두 비어서 돌아온다.
-        blob = f"{exc.stdout!r} {exc.stderr!r}".lower()
-        if exc.stdout in (b"", "", None) and exc.stderr in (b"", "", None):
-            return True
-        return any(k in blob for k in (
-            "device offline", "device not found", "no devices",
-            "closed", "protocol fault", "connection reset",
-        ))
-    return False
 
 
 def device_alive():
@@ -109,15 +85,4 @@ def ensure_device_alive(timeout=RECONNECT_TIMEOUT):
     if device_alive():
         return True
     print("[Recover] adb 연결이 끊긴 것으로 보입니다 → 재연결 시도")
-    return reconnect_device(timeout=timeout)
-
-
-def recover_if_disconnected(exc, timeout=RECONNECT_TIMEOUT):
-    """
-    예외가 끊김이면 재연결하고 그 결과를 반환한다.
-    끊김이 아니면 None을 반환해 '복구 대상이 아님'을 구분한다.
-    """
-    if not is_disconnect_error(exc):
-        return None
-    print(f"[Recover] 연결 끊김 감지: {type(exc).__name__}: {exc}")
     return reconnect_device(timeout=timeout)

@@ -4,7 +4,7 @@ from difflib import SequenceMatcher
 
 import cv2
 import easyocr
-from airtest.core.api import device, sleep, touch
+from airtest.core.api import device
 
 _READER = None
 DEBUG_DIR = "debug_images"
@@ -259,37 +259,3 @@ def find_text(target_text, conf_threshold=40, scale=1.3, roi=DEFAULT_ROI, max_va
     }
 
 
-def select_class(childNm, conf_threshold=40, delay=1.0, scale=1.3, roi=DEFAULT_ROI, max_variants=None, log_fail=True):
-    """
-    Find target text using OCR and touch the best-matched result.
-    Returns True on success, False on failure.
-    """
-    found = find_text(
-        childNm,
-        conf_threshold=conf_threshold,
-        scale=scale,
-        roi=roi,
-        max_variants=max_variants,
-        log_fail=log_fail,
-    )
-    if not found:
-        print(f"[select_class] no match: '{childNm}'")
-        return False
-
-    debug = device().snapshot()
-    x1, y1, x2, y2 = found["roi"]
-    cv2.rectangle(debug, (x1, y1), (x2, y2), (255, 255, 0), 2)
-    cv2.circle(debug, (int(found["x"]), int(found["y"])), 8, (0, 0, 255), -1)
-    cv2.imwrite(os.path.join(DEBUG_DIR, "select_class_last.png"), debug)
-
-    print(
-        f"[select_class] hit='{found['text']}' sim={found['sim']:.2f} "
-        f"conf={found['prob']*100:.1f}% score={found['score']:.3f}"
-    )
-    try:
-        touch((found["x"], found["y"]))
-        sleep(delay)
-        return True
-    except Exception as e:
-        print(f"[select_class] touch failed: {e}")
-        return False
