@@ -1601,22 +1601,44 @@ class MainApp(QtWidgets.QMainWindow):
             self.logger.error(f"Class List 파싱 실패: {e!r}")
 
     def _auto_select_first_class_and_student(self):
+        """
+        조회 직후의 기본 선택: 첫 번째 반의 첫 번째 학생.
+
+        기본값이 ALL/ALL이면 무심코 실행 버튼을 눌렀을 때 전체 반의 전체 계정이
+        돌기 시작한다. 반 하나를 확인하려던 것이 수백 건 테스트가 되므로,
+        가장 좁은 범위를 기본으로 두고 ALL은 사용자가 직접 고르게 한다.
+        """
         if self.class_list_model.rowCount() <= 1:
             self.logger.warning("Auto select skipped: class list is empty.")
             return
 
-        # 기본 선택은 최상위 "ALL" (index 0) — 전체 반 순회가 기본 동작
-        all_index = self.class_list_model.index(0, 0)
-        if not all_index.isValid():
-            self.logger.warning("Auto select skipped: invalid ALL index.")
+        # index 0은 "ALL" 항목이므로 첫 실제 반은 index 1이다.
+        class_index = self.class_list_model.index(1, 0)
+        if not class_index.isValid():
+            self.logger.warning("Auto select skipped: invalid class index.")
             return
 
-        # 반 ALL을 고르면 학생도 ALL로 맞춰진다 (on_class_item_clicked가 처리).
-        # 여기서 학생 목록의 첫 항목을 따로 자동 선택하면 안 된다. 목록 맨 위는
-        # 선생님이라, 반은 ALL인데 선생님 1명만 테스트되는 상태가 된다.
-        self.ui.listView.setCurrentIndex(all_index)
-        self.on_class_item_clicked(all_index)
-        self.logger.info("Auto-selected ALL class / ALL student.")
+        self.ui.listView.setCurrentIndex(class_index)
+        # 학생 목록을 채우고 학생 선택을 ALL로 초기화한다. 아래에서 첫 학생으로 덮는다.
+        self.on_class_item_clicked(class_index)
+
+        # 학생 목록은 ALL → 선생님 → 학생들 순서라 앞의 둘을 건너뛴다.
+        # 선생님을 기본값으로 잡으면 학생 계정 테스트를 의도한 실행이
+        # 조용히 선생님 계정으로 돌아간다.
+        for row in range(self.student_list_model.rowCount()):
+            index = self.student_list_model.index(row, 0)
+            data = index.data(QtCore.Qt.UserRole + 1) or {}
+            if data.get("isAll") or data.get("isTeacher"):
+                continue
+            self.ui.listView_2.setCurrentIndex(index)
+            self.on_student_item_clicked(index)
+            self.logger.info(
+                f"Auto-selected {self.selected_class_nm} / {self.selected_student_nm}")
+            return
+
+        # 학생이 없는 반이면 ALL 상태를 그대로 둔다 (on_class_item_clicked가 맞춰둠).
+        self.logger.warning(
+            f"{self.selected_class_nm}에 학생이 없어 학생 선택은 ALL로 둡니다.")
 
     def on_class_item_clicked(self, index):
         class_id = index.data(QtCore.Qt.UserRole)
