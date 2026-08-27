@@ -387,28 +387,35 @@ def worker_all_api_test(log_queue, user_id, user_pwd, server, device_label, step
             print("[ERROR] no classes found.")
             return
 
+        # 반/학생 모두 빈 값이 ALL을 뜻한다 (GUI의 ALL 항목이 빈 studentId/classId를 넣는다).
+        #   반 ALL  + 학생 ALL  → 전체 반의 전체 계정
+        #   반 선택 + 학생 ALL  → 그 반의 전체 계정
+        #   반 선택 + 학생 선택 → 그 학생 1명
         _gui = gui_ctx or {}
         gui_student_id = str(_gui.get("student_id") or "").strip()
         gui_class_id = str(_gui.get("class_id") or "").strip()
 
+        # 반이 ALL인데 학생만 지정된 조합은 뜻이 성립하지 않는다. GUI가 애초에
+        # 못 고르게 막지만, 낡은 선택 상태가 넘어오는 경우까지 여기서 무력화한다.
+        if not gui_class_id and gui_student_id:
+            print("[WARN] 반이 ALL이므로 학생 선택을 무시하고 전체 학생을 테스트합니다.")
+            gui_student_id = ""
+
         # ── 테스트 대상 반 결정 ──
-        if gui_student_id:
-            # GUI 학생 선택 시: 해당 반 1개만
-            first_class = classes[0]
-            classes_to_test = [{
-                "classId": gui_class_id or str(first_class.get("classId", "")),
-                "classNm": _gui.get("class_nm") or str(first_class.get("classNm", "")),
-                "targetAge": _gui.get("target_age") or str(first_class.get("targetAge", "")),
-            }]
-        elif gui_class_id:
-            # GUI 반 선택 시: 그 반 1개만
+        if gui_class_id:
+            # 반 선택 시: 그 반 1개만. 이름/연령은 GUI 값이 비면 목록에서 찾아 채운다.
+            matched = next(
+                (c for c in classes
+                 if str(c.get("classId", "")).strip() == gui_class_id),
+                {},
+            )
             classes_to_test = [{
                 "classId": gui_class_id,
-                "classNm": _gui.get("class_nm") or "",
-                "targetAge": _gui.get("target_age") or "",
+                "classNm": _gui.get("class_nm") or str(matched.get("classNm", "")),
+                "targetAge": _gui.get("target_age") or str(matched.get("targetAge", "")),
             }]
         else:
-            # 미선택 시: 전체 반
+            # 반 ALL: 전체 반
             classes_to_test = [
                 {
                     "classId": str(c.get("classId", "")),
@@ -1581,21 +1588,12 @@ class MainApp(QtWidgets.QMainWindow):
             self.logger.warning("Auto select skipped: invalid ALL index.")
             return
 
+        # 반 ALL을 고르면 학생도 ALL로 맞춰진다 (on_class_item_clicked가 처리).
+        # 여기서 학생 목록의 첫 항목을 따로 자동 선택하면 안 된다. 목록 맨 위는
+        # 선생님이라, 반은 ALL인데 선생님 1명만 테스트되는 상태가 된다.
         self.ui.listView.setCurrentIndex(all_index)
         self.on_class_item_clicked(all_index)
-
-        if self.student_list_model.rowCount() <= 0:
-            self.logger.warning("Auto select skipped: student list is empty.")
-            return
-
-        first_student_index = self.student_list_model.index(0, 0)
-        if not first_student_index.isValid():
-            self.logger.warning("Auto select skipped: invalid first student index.")
-            return
-
-        self.ui.listView_2.setCurrentIndex(first_student_index)
-        self.on_student_item_clicked(first_student_index)
-        self.logger.info("Auto-selected ALL class and first student.")
+        self.logger.info("Auto-selected ALL class / ALL student.")
 
     def on_class_item_clicked(self, index):
         class_id = index.data(QtCore.Qt.UserRole)
@@ -1605,20 +1603,14 @@ class MainApp(QtWidgets.QMainWindow):
 
         if class_id == "":
             # "ALL" 선택: 특정 반이 아닌 전체 반 순회를 의미.
-            # 단, study/access 토큰 확보용으로 첫 반의 학생 목록은 그대로 채워둔다.
+            # 반이 ALL이면 학생을 하나만 고르는 것은 뜻이 성립하지 않으므로
+            # 학생 목록에도 ALL만 남긴다. (예전에는 첫 반의 학생 목록을 채우고
+            #  첫 항목을 자동 선택해서, 반 ALL인데 선생님 1명만 도는 문제가 있었다)
             self.selected_class_id = ""
             self.selected_class_nm = "ALL"
             self.selected_target_age = ""
             self.logger.info("클래스 선택: ALL (전체 반 대상)")
-            first_class_id = ""
-            if self.class_list_model.rowCount() > 1:
-                first_class_id = str(
-                    self.class_list_model.index(1, 0).data(QtCore.Qt.UserRole) or ""
-                ).strip()
-            if first_class_id:
-                self._load_student_list(first_class_id)
-            else:
-                self.student_list_model.clear()
+            self._show_student_all_only()
             return
 
         # 선택된 class 정보 저장
@@ -1627,6 +1619,39 @@ class MainApp(QtWidgets.QMainWindow):
         self.selected_class_nm = display.split(" / ")[0] if " / " in display else display
         self.selected_target_age = display.split(" / ")[1] if " / " in display else ""
         self._load_student_list(class_id)
+
+        # 반을 바꾸면 학생 선택은 ALL로 되돌린다. 그러지 않으면 직전 반에서 고른
+        # 학생 ID가 그대로 남아, 새 반과 무관한 계정 하나만 테스트하게 된다.
+        if self.student_list_model.rowCount() > 0:
+            self.ui.listView_2.setCurrentIndex(self.student_list_model.index(0, 0))
+            self._select_student_all()
+
+    # 학생 목록의 ALL은 studentId를 빈 문자열로 둔다. 반 목록의 ALL과 같은 약속이라
+    # 워커 쪽에서 "빈 값 = 전체"라는 규칙 하나로 처리할 수 있다.
+    def _append_student_all_item(self):
+        item = QtGui.QStandardItem("ALL")
+        item.setData("", QtCore.Qt.UserRole)
+        item.setData({"studentNm": "ALL", "isAll": True}, QtCore.Qt.UserRole + 1)
+        self.student_list_model.appendRow(item)
+
+    def _select_student_all(self):
+        """학생 ALL 선택 상태로 만든다. 특정 학생이 없으므로 study/access는 하지 않는다."""
+        self.selected_student_id = ""
+        self.selected_student_nm = "ALL"
+        # 이전 학생의 토큰이 남아 있으면 기기 자동화 버튼이 엉뚱한 계정으로 돈다.
+        self.study_access_mem_nm = None
+        self.study_access_mem_id = None
+        self.study_access_auth_token = None
+        self.label_mem_id.setText("memId: -")
+        self.label_auth_token.setText("authToken: -")
+        self.logger.info("학생 선택: ALL (해당 범위의 전체 학생 대상)")
+
+    def _show_student_all_only(self):
+        """반이 ALL일 때의 학생 목록. ALL 외에는 고를 수 있는 것이 없다."""
+        self.student_list_model.clear()
+        self._append_student_all_item()
+        self.ui.listView_2.setCurrentIndex(self.student_list_model.index(0, 0))
+        self._select_student_all()
 
     def _load_student_list(self, class_id):
         if not self.class_auth_token or not self.class_api_server:
@@ -1655,8 +1680,9 @@ class MainApp(QtWidgets.QMainWindow):
             )
 
             self.student_list_model.clear()
+            self._append_student_all_item()
 
-            # teacherMemId가 있으면 맨 위에 "선생님(memNm)" 항목 추가
+            # teacherMemId가 있으면 "선생님(memNm)" 항목 추가
             if teacher_mem_id:
                 teacher_label = f"선생님({teacher_mem_nm})" if teacher_mem_nm else "선생님"
                 teacher_login_id = self.ui.lineEdit.text().strip()
@@ -1694,6 +1720,11 @@ class MainApp(QtWidgets.QMainWindow):
             or student_data.get("studentLoginId")
             or self.ui.lineEdit.text().strip()
         ).strip()
+
+        # ALL 항목은 studentId가 비어 있는 것이 정상이므로 먼저 걸러낸다.
+        if student_data.get("isAll"):
+            self._select_student_all()
+            return
 
         if not student_id:
             self.logger.warning("선택한 학생의 studentId를 찾을 수 없습니다.")
