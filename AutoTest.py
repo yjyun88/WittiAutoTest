@@ -4,6 +4,8 @@ import traceback
 
 from airtest.core.api import connect_device, device, time
 
+from adb_recovery import ensure_device_alive, set_device_uri
+
 from TEST_witti_box import check_wittibox
 from TEST_witti_world import check_wittiaram, check_wittimew, exit_aram_to_plaza
 from download_thumbnails import cleanup_thumbnails
@@ -44,7 +46,13 @@ def AutoTest_Start(
     selected_class_id="",
 ):
     # 0) Connect device
-    connect_device(f"Android://127.0.0.1:5037/{device_name}?cap_method=MINICAP")
+    # 부모 프로세스가 정한 adb 서버 포트를 그대로 따른다. 여기서 값을 고정하면
+    # 포트를 옮겼을 때 워커만 다른 서버에 붙어 기기를 못 찾는다.
+    adb_port = os.environ.get("ANDROID_ADB_SERVER_PORT", "5037")
+    device_uri = f"Android://127.0.0.1:{adb_port}/{device_name}?cap_method=MINICAP"
+    connect_device(device_uri)
+    # 끊겼을 때 같은 옵션으로 다시 붙을 수 있도록 URI를 복구 모듈에 넘겨둔다
+    set_device_uri(device_uri)
 
     # 1) Read current device resolution
     width, height = device().get_current_resolution()
@@ -144,8 +152,13 @@ def AutoTest_Start(
                 # 여기까지 올라온 예외는 컨텐츠 단위 복구(목록 복귀)로도 못 살린 경우다.
                 # 광장 복귀까지 실패하면 화면 상태를 알 수 없어 남은 항목이 모두
                 # 무의미하게 실패하므로 ALL 진행을 중단한다.
+                # 화면 복구 전에 연결부터 확인한다. adb가 끊긴 상태에서는
+                # exists() 결과를 믿을 수 없어 복구 판정 자체가 틀어진다.
                 recovered = False
                 try:
+                    if not ensure_device_alive():
+                        print("[FATAL] adb 재연결 실패 → ALL 진행을 중단합니다")
+                        break
                     recovered = exit_aram_to_plaza()
                 except Exception as e2:
                     print(f"[WARN] 광장 복귀 중 오류: {e2}")

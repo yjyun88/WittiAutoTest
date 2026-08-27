@@ -3,6 +3,7 @@ import time as pytime
 from request_API import *
 from world_ACT import *
 from download_thumbnails import download_thumbnails
+from adb_recovery import ensure_device_alive
 
 BASE_RESOLUTION = (1920, 1200)
 
@@ -94,9 +95,21 @@ def exit_aram_to_plaza():
     """
     print("아람북월드 컨텐츠 검증 종료, 광장으로 이동합니다.")
 
+    # 화면을 읽기 전에 연결부터 확인한다. 끊긴 직후에는 마지막 프레임이
+    # 남아 있거나 판정이 흔들려 엉뚱한 화면을 광장으로 오인할 수 있다.
+    if not ensure_device_alive():
+        print("[WARN] adb 재연결 실패 → 광장 복귀를 확인할 수 없습니다")
+        return False
+
+    # 광장 판정은 두 번 연속 일치할 때만 인정한다.
+    # 한 프레임만 보고 True를 돌려주면, 실제로는 다른 화면인데 복구 성공으로
+    # 처리되어 이후 항목이 전부 엉뚱한 화면에서 시작된다.
     if exists(menu_tpl):
-        print("[Info] 이미 광장 화면입니다.")
-        return True
+        sleep(1)
+        if exists(menu_tpl):
+            print("[Info] 이미 광장 화면입니다.")
+            return True
+        print("[Info] 광장 판정이 재확인에서 뒤집힘 → 나가기 시퀀스를 진행합니다")
 
     # 컨텐츠 안이라면 먼저 호 목록까지 나온다 (목록에 나가기 버튼이 있다)
     if not ensure_back_to_list():

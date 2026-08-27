@@ -18,6 +18,7 @@ from PyQt5.QtWidgets import QApplication, QMessageBox
 
 from AutoTest import AutoTest_Start
 from Main_Window import Ui_MainWindow
+from device_lock import DeviceLock, describe_holder
 from multiprocessing import Process, Queue, freeze_support
 
 from request_API import (
@@ -84,6 +85,55 @@ def load_local_config():
     return {}
 
 
+# ── adb 서버 포트 ─────────────────────────────────────────────────────
+# 기본 포트 5037을 그대로 쓴다. 전용 포트로 옮겨봤지만 손해가 더 컸다.
+#
+# USB 기기는 adb '서버' 단위로 배타적이다. 한 서버가 여러 대를 동시에 물고
+# 있는 것은 정상이지만, 서버가 둘이면 같은 기기를 두고 선착순으로 다투고
+# 진 쪽에는 그 기기가 아예 보이지 않는다. Android Studio는 자기 SDK의 adb로
+# 5037에 서버를 띄우므로, 우리가 다른 포트로 나가면 서버가 둘이 된다.
+# (실측: 전용 포트에서는 기기 1대, 5037에서는 USB 2대 + 무선 2대가 보였다.)
+#
+# 5037을 떠났던 이유는 버전이 다른 adb 바이너리가 붙으면 서버를 죽이고 자기
+# 것을 새로 띄운다는 것이었는데, 재현되지 않았다. 번들 adb 35.0.2로 Studio가
+# 띄운 37.0.0 서버에 반복해서 붙여도 서버 PID가 그대로였다. 두 버전은 와이어
+# 호환이라 adb가 서버를 죽이지 않는다.
+#
+# 그래도 서버가 재시작되면(다른 툴의 kill-server, Studio의 Restart adb 등)
+# 연결이 끊기는데, 그쪽은 adb_recovery의 자동 재연결이 받아낸다.
+#
+# 같은 기기를 두 인스턴스가 동시에 테스트하는 것은 포트로는 막지 못한다.
+# 무선 연결은 여러 클라이언트가 같은 기기에 각자 붙을 수 있기 때문이다.
+# 그쪽은 device_lock의 기기 잠금이 담당한다.
+_DEFAULT_ADB_SERVER_PORT = 5037
+
+# 포트를 옮겨야 할 때를 위한 탈출구. 설정 파일을 두지 않는 이유는, 인스턴스마다
+# 값이 갈리면 서버가 쪼개져 위의 USB 쟁탈이 그대로 생기기 때문이다. 바꿀 때는
+# 모든 인스턴스가 같은 값을 보도록 시스템 환경변수로 준다.
+# 옮길 포트는 반드시 비어 있는지 확인할 것. 5040은 이 PC에서 svchost가 물고
+# 있었고, adb가 그런 상대에 붙으면 핸드셰이크에서 영영 멈춘다.
+_ADB_PORT_ENV = "WITTI_ADB_SERVER_PORT"
+
+
+def _instance_dir():
+    """이 인스턴스의 기준 폴더 (exe가 놓인 폴더 / 개발 시 프로젝트 폴더)."""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def get_adb_port():
+    """이 앱이 쓰는 adb 서버 포트. 하위 프로세스도 같은 서버를 보게 전파한다."""
+    try:
+        port = int(os.environ.get(_ADB_PORT_ENV, "") or _DEFAULT_ADB_SERVER_PORT)
+    except ValueError:
+        port = _DEFAULT_ADB_SERVER_PORT
+    # scrcpy와 워커 프로세스는 각자 adb 클라이언트를 띄운다. 환경변수를 함께
+    # 넘겨야 포트를 옮겼을 때 그쪽만 5037에 남는 일이 없다.
+    os.environ["ANDROID_ADB_SERVER_PORT"] = str(port)
+    return port
+
+
 def get_adb_path():
     """
     Return bundled adb.exe path.
@@ -121,22 +171,41 @@ def run_adb(args, **popen_kwargs):
     Example: run_adb(["devices", "-l"], text=True)
     """
     adb = get_adb_path()
-    return subprocess.check_output([adb] + args, **popen_kwargs)
+    # 포트를 명시한다. 환경변수만 믿으면 포트를 옮겼을 때 어딘가 한 곳이
+    # 기본값으로 새어도 조용히 엉뚱한 서버에 붙어 원인을 찾기 어려워진다.
+    return subprocess.check_output([adb, "-P", str(get_adb_port())] + args, **popen_kwargs)
 
 
 def ensure_adb_server():
     """
-    Ensure bundled adb server is running.
+    이 앱이 쓸 adb 서버를 띄운다.
+
     kill-server는 하지 않는다. 다른 인스턴스가 테스트 중일 때 서버를 죽이면
     Wi-Fi 연결 기기가 떨어지고 미러링(scrcpy) 터널도 끊긴다.
     이미 서버가 떠 있으면 start-server는 아무 동작도 하지 않는다.
+
+    조회 전에 반드시 불러야 한다. 서버가 없으면 adb 클라이언트가 자기가
+    띄우는데, 그 기동 비용(실측 약 2초)을 UI 스레드가 그대로 뒤집어쓴다.
     Failures are ignored to keep app flow running.
     """
+    port = get_adb_port()
+
+    # check_output에 stdout을 넘기면 ValueError로 죽는다. 출력을 버리면서
+    # 예외만 무시하려면 run을 써야 한다. (check_output으로 두면 서버가
+    # 한 번도 뜨지 않아 이 함수가 조용히 무의미해진다)
     try:
-        subprocess.check_output([get_adb_path(), "start-server"],
-                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run([get_adb_path(), "-P", str(port), "start-server"],
+                       check=False, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL, timeout=15)
     except Exception:
         pass
+
+    return port
+
+
+def describe_adb_server():
+    """현재 adb 서버 설정을 사람이 읽을 수 있는 한 줄로."""
+    return f"adb 서버: 포트 {get_adb_port()} (인스턴스 폴더 {_instance_dir()})"
 
 
 def ensure_adb_keys(app_name="AutoTest"):
@@ -167,9 +236,11 @@ def ensure_adb_keys(app_name="AutoTest"):
     os.environ["ADB_VENDOR_KEYS"] = str(stable_root)
 
     if not stable_key.exists():
+        # 키 생성용 start-server도 같은 포트로 띄운다.
+        # 포트를 빼먹으면 포트를 옮겼을 때 여기서만 5037 서버가 따로 생긴다.
         adb = get_adb_path()
         try:
-            subprocess.run([adb, "start-server"], check=False,
+            subprocess.run([adb, "-P", str(get_adb_port()), "start-server"], check=False,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except Exception:
             pass
@@ -2494,6 +2565,12 @@ class MainApp(QtWidgets.QMainWindow):
         super().__init__()
         self.log_queue: Queue = None
         self.worker_process: Process = None
+        # 이 인스턴스가 잡고 있는 기기 잠금. 테스트 실행 구간에만 유지한다.
+        self.device_lock = DeviceLock()
+        # 그 잠금을 소유한 워커 프로세스. _drain_timer는 테스트가 끝나도 계속
+        # 돌기 때문에, '지금 잠금을 쥔 워커'를 따로 들고 있지 않으면 다음 실행에서
+        # 잠금을 얻자마자 직전 워커가 죽어 있는 것을 보고 곧바로 풀어버린다.
+        self._lock_proc = None
         self._drain_timer: QtCore.QTimer = None
 
         class EmittingStream(QtCore.QObject):
@@ -2514,6 +2591,7 @@ class MainApp(QtWidgets.QMainWindow):
         self.ui.setupUi(self)
         self.setWindowFlag(QtCore.Qt.WindowStaysOnTopHint, True)
         ensure_adb_server()
+        self.logger.info(describe_adb_server())
         self.load_devices()
 
         self.ui.listView_2.setGeometry(QtCore.QRect(10, 20, 291, 352))
@@ -2732,12 +2810,19 @@ class MainApp(QtWidgets.QMainWindow):
         self.stop_mirror()
         self.mirror_placeholder.setText(f"{device_label}\n미러링 연결 중...")
 
+        # scrcpy도 adb 클라이언트를 통해 붙는다. 서버가 없으면 scrcpy가 직접
+        # 띄우게 되고, 그 기동 시간만큼 미러링 시작이 늦어진다.
+        ensure_adb_server()
+
         self._mirror_aspect = self._query_device_aspect(serial)
         self._mirror_title = f"WittiMirror_{os.getpid()}_{abs(hash(serial)) % 100000}"
 
         # 번들 adb를 쓰도록 지정해 scrcpy 내장 adb와의 서버 충돌 방지
         env = os.environ.copy()
         env["ADB"] = get_adb_path()
+        # scrcpy가 띄우는 adb 클라이언트도 이 인스턴스의 서버를 보게 한다.
+        # 빠지면 scrcpy만 공용 5037로 붙어 기기를 못 찾는다.
+        env["ANDROID_ADB_SERVER_PORT"] = str(get_adb_port())
         # 창 활성화용 첫 클릭도 터치로 전달 (마우스 입력 우선).
         # scrcpy가 자체적으로도 켜지만 env로 한 번 더 강제한다.
         # (env가 우선권을 가져서 scrcpy 로그에 "Could not enable mouse focus
@@ -2944,6 +3029,7 @@ class MainApp(QtWidgets.QMainWindow):
 
     def closeEvent(self, event):
         self.stop_mirror()
+        self._release_device_lock()
         super().closeEvent(event)
 
     # ── Device mirroring 끝 ────────────────────────────────────────────
@@ -3182,6 +3268,10 @@ class MainApp(QtWidgets.QMainWindow):
         )
 
     def load_devices(self):
+        # 서버가 없으면 아래 run_adb의 adb 클라이언트가 자기가 띄우는데,
+        # 그 기동 비용(실측 약 2초)을 이 함수가 통째로 뒤집어쓴다.
+        # 여기서 먼저 확보한다. (이미 떠 있으면 아무 동작도 안 한다)
+        ensure_adb_server()
         try:
             out = run_adb(["devices", "-l"], text=True, encoding="utf-8", errors="ignore", timeout=20)
             lines = [ln for ln in out.strip().splitlines()[1:] if ln.strip()]
@@ -3226,15 +3316,21 @@ class MainApp(QtWidgets.QMainWindow):
                 display_name = model or k
                 if aos: display_name += f" / AOS {aos}"
                 display_name += f" ({k})"
-                if 'usb' in d: items.append((f"{display_name} [USB]", d['usb']['canon']))
-                if 'wifi' in d: items.append((f"{display_name} [Wi-Fi]", d['wifi']['dev_id']))
-            if not items: items = [("(no devices)", "")]
+                if 'usb' in d: items.append((f"{display_name} [USB]", d['usb']['canon'], k))
+                if 'wifi' in d: items.append((f"{display_name} [Wi-Fi]", d['wifi']['dev_id'], k))
+            if not items: items = [("(no devices)", "", "")]
         except Exception as e:
-            items = [(f"Error: {e}", "")]
+            items = [(f"Error: {e}", "", "")]
 
         self.ui.comboBox_4.clear()
-        for label, dev_id in items:
+        for label, dev_id, canon in items:
+            # 다른 인스턴스가 테스트 중인 기기는 라벨에 표시한다.
+            # USB/Wi-Fi 어느 경로로 보이든 같은 기기면 같은 잠금에 걸린다.
+            if canon and canon != self.device_lock.serial:
+                label += describe_holder(canon)
             self.ui.comboBox_4.addItem(label, dev_id)
+            self.ui.comboBox_4.setItemData(
+                self.ui.comboBox_4.count() - 1, canon, QtCore.Qt.UserRole + 1)
 
     def on_start(self):
         if self.worker_process and self.worker_process.is_alive():
@@ -3265,6 +3361,11 @@ class MainApp(QtWidgets.QMainWindow):
             self.logger.error("study/access authToken이 없습니다. 먼저 학생을 선택해주세요.")
             return
 
+        # 같은 기기를 다른 인스턴스가 이미 테스트 중이면 시작하지 않는다.
+        # 무선 연결은 여러 인스턴스가 동시에 붙을 수 있어 adb가 막아주지 못한다.
+        if not self._acquire_device_lock():
+            return
+
         self.log_queue = Queue()
         args = (
             self.log_queue,
@@ -3284,7 +3385,13 @@ class MainApp(QtWidgets.QMainWindow):
             str(self.selected_class_id or "").strip(),
         )
         self.worker_process = Process(target=worker_main, args=args)
-        self.worker_process.start()
+        try:
+            self.worker_process.start()
+        except Exception:
+            # 프로세스가 뜨지 못하면 잠금이 영원히 남는다
+            self._release_device_lock()
+            raise
+        self._lock_proc = self.worker_process
         self.logger.info(f"AutoTest 프로세스 시작 (PID={self.worker_process.pid})")
 
         if self._drain_timer is None:
@@ -3497,13 +3604,44 @@ class MainApp(QtWidgets.QMainWindow):
         self._drain_timer.start(100)
 
     def _drain_logs(self):
-        if not self.log_queue: return
-        while not self.log_queue.empty():
-            try:
-                line = self.log_queue.get_nowait()
-                self.append_log(line)
-            except Exception:
-                break
+        if self.log_queue:
+            while not self.log_queue.empty():
+                try:
+                    line = self.log_queue.get_nowait()
+                    self.append_log(line)
+                except Exception:
+                    break
+
+        # 잠금을 쥔 워커가 끝났으면 놓아준다.
+        # 남은 로그를 모두 비운 뒤에 확인해야 마지막 줄이 잘리지 않는다.
+        if self._lock_proc is not None and not self._lock_proc.is_alive():
+            self._release_device_lock()
+
+    def _acquire_device_lock(self):
+        """선택한 기기의 잠금을 얻는다. 다른 인스턴스가 쓰는 중이면 False."""
+        idx = self.ui.comboBox_4.currentIndex()
+        # 잠금 키는 정식 시리얼(canon)이어야 한다. USB 항목과 Wi-Fi 항목은
+        # dev_id가 서로 다르므로, dev_id로 잠그면 무선으로 우회 실행된다.
+        canon = self.ui.comboBox_4.itemData(idx, QtCore.Qt.UserRole + 1) or             self.ui.comboBox_4.currentData()
+        if not canon:
+            self.logger.error("디바이스를 선택해주세요.")
+            return False
+
+        label = self.ui.comboBox_4.currentText()
+        if self.device_lock.acquire(canon, instance=os.path.basename(_instance_dir()),
+                                    device_label=label):
+            return True
+
+        self.logger.error(
+            f"이 기기는 다른 인스턴스가 사용 중입니다{describe_holder(canon)}. "
+            f"해당 테스트가 끝난 뒤 [새로고침] 후 다시 시도해주세요.")
+        return False
+
+    def _release_device_lock(self):
+        self._lock_proc = None
+        if self.device_lock.held:
+            self.logger.info(f"기기 잠금 해제: {self.device_lock.serial}")
+            self.device_lock.release()
 
     def on_stop(self):
         if self.worker_process and self.worker_process.is_alive():
@@ -3514,6 +3652,8 @@ class MainApp(QtWidgets.QMainWindow):
             self.logger.info("실행 중인 작업이 없습니다.")
         if self._drain_timer:
             self._drain_timer.stop()
+        # 타이머를 멈추면 _drain_logs가 더 이상 돌지 않으므로 여기서 직접 놓아준다
+        self._release_device_lock()
 
 
 def main():

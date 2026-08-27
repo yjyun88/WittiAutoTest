@@ -2,6 +2,7 @@ from airtest.core.api import exists, swipe, touch, snapshot
 from airtest.core.error import TargetNotFoundError
 
 from Touch_template import touch_template
+from adb_recovery import ensure_device_alive
 from utils import Template, get_ocr_reader
 from PIL import Image
 
@@ -508,6 +509,11 @@ def match_and_touch_roi(roi, top, subjCd, curtnSeq, act_items, saved_files):
             # 목록까지 복귀하지 못하면 화면 상태를 알 수 없으므로 호 단위 처리에 맡긴다.
             print(f"[ERROR] '{action}' 처리 실패: {e}")
             traceback.print_exc()
+            # 캡처/복귀 모두 화면을 읽어야 하므로 연결부터 되살린다.
+            # 끊긴 채로 진행하면 실패 캡처도, 목록 복귀 판정도 의미가 없다.
+            if not ensure_device_alive():
+                print("[ERROR] adb 재연결 실패 → 호 단위 처리에 맡깁니다")
+                raise
             _record_failure(subjCd, curtnSeq, action, idx, act_items, saved_files, e, started_at)
             if not ensure_back_to_list():
                 raise
