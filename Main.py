@@ -280,12 +280,27 @@ def worker_main(
         print(traceback.format_exc())
 
 
+def _safe_filename_part(name, fallback="ALL", max_len=20):
+    """
+    반/학생 이름을 파일명에 넣을 수 있는 형태로 다듬는다.
+
+    윈도우가 금지하는 문자(역슬래시 / : * ? " < > |)와 제어문자가 이름에 섞이면
+    저장 자체가 실패하므로 밑줄로 바꾼다. 공백도 파일명에서 다루기 번거로워
+    같이 밑줄로 만든다. 이름이 너무 길면 경로 길이 제한에 걸릴 수 있어 자른다.
+    """
+    cleaned = re.sub(r'[\\/:*?"<>|\x00-\x1f]', "_", str(name or "").strip())
+    cleaned = re.sub(r"\s+", "_", cleaned).strip("._")
+    if not cleaned:
+        return fallback
+    return cleaned[:max_len]
+
+
 def worker_all_api_test(log_queue, user_id, user_pwd, server, device_label, steps,
                         gui_ctx=None):
     """ALL API 테스트.
     - GUI에서 학생 선택 시: 그 1명만 테스트
     - GUI 미선택 시: 선생님(teacherMemId 있을 때) + 전체 학생 테스트
-    매 실행마다 새 파일 (ALL_api_test_{YYMMDD}_{HHMMSS}.xlsx) 생성.
+    매 실행마다 새 파일 (api_test_{반}_{학생}_{YYMMDD}_{HHMMSS}.xlsx) 생성.
     파일에는 요약 시트 + 타깃별 시트(memNm) 포함.
     """
     import builtins
@@ -695,7 +710,15 @@ def worker_all_api_test(log_queue, user_id, user_pwd, server, device_label, step
         time_str = datetime.now().strftime("%H%M%S")
         report_dir = os.path.join(os.getcwd(), "test_report", "api_test")
         os.makedirs(report_dir, exist_ok=True)
-        file_path = os.path.join(report_dir, f"ALL_api_test_{date_str}_{time_str}.xlsx")
+        # 반은 GUI에서 하나만 고를 수 있으므로 "ALL 아니면 반 이름 1개"로 확정된다.
+        # 학생도 마찬가지라, 파일명에 들어갈 값은 항상 두 개로 정해진다.
+        class_part = _safe_filename_part(
+            classes_to_test[0]["classNm"] if gui_class_id else "ALL")
+        student_part = _safe_filename_part(
+            _gui.get("student_nm") if gui_student_id else "ALL")
+        file_path = os.path.join(
+            report_dir,
+            f"api_test_{class_part}_{student_part}_{date_str}_{time_str}.xlsx")
 
         wb = Workbook()
         wb.remove(wb.active)
