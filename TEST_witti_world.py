@@ -2,6 +2,7 @@ from airtest.core.api import exists, wait, sleep, touch
 import time as pytime
 from request_API import *
 from world_ACT import *
+from world_ACT import _on_book_list   # 언더스코어라 import *로 안 들어온다
 from download_thumbnails import download_thumbnails
 from adb_recovery import ensure_device_alive
 
@@ -24,6 +25,9 @@ mew_exit_y = Template(r"button_images\witti_world\mew_exit_y.png", resolution=BA
 exit_tpl = Template(r"button_images\witti_world\school_exit.png", resolution=BASE_RESOLUTION)
 exit_tpl_2 = Template(r"button_images\witti_world\school_exit_2.png", resolution=BASE_RESOLUTION)
 exit_y_tpl = Template(r"button_images\witti_world\school_exit_y.png", resolution=BASE_RESOLUTION)
+# 호 목록 → 과목 선택으로 한 단계만 올라가는 하늘색 뒤로 화살표.
+# 우측 상단 ✕(exit_tpl_2)는 광장까지 나가버리므로 과목 전환에는 쓸 수 없다.
+aram_back_tpl = Template(r"button_images\witti_world\aram_back.png", resolution=BASE_RESOLUTION)
 mew_after_tpl = Template(r"button_images\mew_down.png", resolution=BASE_RESOLUTION)
 mew_after_tpl_2 = Template(r"button_images\mew_down_9.png", resolution=BASE_RESOLUTION, threshold=0.8)
 mew_home_tpl = Template(r"button_images\mew_home.png", resolution=BASE_RESOLUTION)
@@ -58,6 +62,30 @@ def _tap_center_until(template, center_x, center_y, *, attempts=4, wait_sec=1.0)
     return False
 
 
+# 광장 복귀를 기다리는 한계 시간. 나가기 버튼을 다 누른 뒤의 로딩만 기다리므로
+# 넉넉해도 정상 흐름에서는 도착하는 즉시 빠져나온다.
+PLAZA_RETURN_TIMEOUT = 30
+
+# 아람북월드 과목 선택 화면의 과목 버튼. 진입과 과목 전환 양쪽에서 쓴다.
+_SUBJECT_TEMPLATES = {1: aram_korean_tpl, 2: aram_math_tpl, 3: aram_science_tpl}
+
+
+def _on_subject_select():
+    """
+    아람북월드 과목 선택 화면인지 판별한다.
+
+    과목 버튼만 보고 판단하면 안 된다. 호 목록 화면 상단에도 같은 과목 라벨이
+    있어서 school_aram_kor가 0.9대로 잡힌다 (실측: 호 목록에서 0.907@(546,338)).
+    그대로 두면 호 목록을 과목 화면으로 오인해 뒤로 나가는 단계를 건너뛰고,
+    있지도 않은 다음 과목 버튼을 찾다가 실패한다.
+
+    STEP 탭은 호 목록에만 있으므로, 목록이 아닐 때에 한해 과목 화면으로 본다.
+    """
+    if _on_book_list():
+        return False
+    return any(exists(t) for t in _SUBJECT_TEMPLATES.values())
+
+
 # 광장 → 위티스쿨 → 아람북월드 → 과목 진입
 def enter_aram_subject(subjCd, width, height):
     # 화면 중앙 좌표
@@ -73,18 +101,64 @@ def enter_aram_subject(subjCd, width, height):
     # 스쿨 진입 후 아람북월드 진입
     _touch_required(enter_tpl, threshold=0.60)
     _touch_required(aram_tpl, threshold=0.60)
-    if subjCd == 1:
-        _touch_required(aram_korean_tpl, threshold=0.60)
-    elif subjCd == 2:
-        _touch_required(aram_math_tpl, threshold=0.60)
-    elif subjCd == 3:
-        _touch_required(aram_science_tpl, threshold=0.60)
+    subject_tpl = _SUBJECT_TEMPLATES.get(subjCd)
+    if subject_tpl is not None:
+        _touch_required(subject_tpl, threshold=0.60)
     sleep(5)
 
 
-# 광장 복귀를 기다리는 한계 시간. 나가기 버튼을 다 누른 뒤의 로딩만 기다리므로
-# 넉넉해도 정상 흐름에서는 도착하는 즉시 빠져나온다.
-PLAZA_RETURN_TIMEOUT = 30
+# 아람북월드 안에서 과목만 바꾸기 (ALL 모드에서 과목이 넘어갈 때)
+def switch_aram_subject(next_subjCd):
+    """
+    호 목록에서 뒤로 화살표 한 번으로 과목 선택 화면까지만 올라가 다음 과목을 고른다.
+
+    광장까지 나갔다 다시 들어오면 광장→스쿨→인트로→아람북월드를 매번 다시
+    거쳐야 한다. 과목이 바뀔 때 필요한 것은 한 단계 위로 올라가는 것뿐이다.
+
+    화면을 눈으로 확인하고 움직인다. 화살표를 눌렀는데 과목 선택 화면이 아니면
+    화면 구조가 달라진 것이므로 False를 돌려주고, 호출한 쪽이 광장 경로로
+    돌아가게 한다. 여기서 억지로 진행하면 엉뚱한 화면에서 과목을 누른다.
+    """
+    print(f"과목 전환: 뒤로 화살표로 과목 선택 화면까지만 나갑니다 (다음 과목 {next_subjCd})")
+
+    if not ensure_device_alive():
+        print("[WARN] adb 재연결 실패 → 과목 전환을 확인할 수 없습니다")
+        return False
+
+    subject_tpl = _SUBJECT_TEMPLATES.get(next_subjCd)
+    if subject_tpl is None:
+        print(f"[WARN] 알 수 없는 과목 코드: {next_subjCd}")
+        return False
+
+    # 여기 도착했을 때 화면은 항상 호 목록이다. 마지막 컨텐츠를 끝내고
+    # ensure_back_to_list()로 목록까지 복귀한 뒤에만 이 함수가 불린다.
+    # 좌상 ROI로 제한한다. 전체 화면에서 찾으면 우측 상단의 다른 요소가
+    # 낮은 배율에서 0.7대 점수로 잡히는 자리가 있다 (실측 (1426,53)).
+    if not touch_template(aram_back_tpl, region_code=1, threshold=0.80):
+        print("[WARN] 뒤로 화살표를 찾지 못했습니다")
+        return False
+    sleep(2)
+
+    # 과목 선택 화면 판정은 두 번 연속 일치할 때만 인정한다. 화면 전환 중의
+    # 한 프레임을 믿으면 아직 넘어가지 않은 화면에서 과목을 누르게 된다.
+    for _ in range(10):
+        if _on_subject_select():
+            sleep(1)
+            if _on_subject_select():
+                break
+        sleep(1)
+    else:
+        print("[WARN] 과목 선택 화면으로 나가지 못했습니다")
+        return False
+
+    # 여기서 예외를 던지면 AutoTest의 except가 방금 PASS한 항목을 FAIL로 뒤집는다.
+    # 전환 실패는 실패대로 알리되, 판정은 호출한 쪽의 폴백에 맡긴다.
+    if not touch_template(subject_tpl, threshold=0.60):
+        print(f"[WARN] 과목 버튼을 찾지 못했습니다 (과목 {next_subjCd})")
+        return False
+    sleep(5)
+    print(f"[Info] 과목 전환 완료 (과목 {next_subjCd})")
+    return True
 
 
 # 아람북월드 → 광장으로 나가기

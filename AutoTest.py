@@ -7,7 +7,8 @@ from airtest.core.api import connect_device, device, time
 from adb_recovery import ensure_device_alive, set_device_uri
 
 from TEST_witti_box import check_wittibox
-from TEST_witti_world import check_wittiaram, check_wittimew, exit_aram_to_plaza
+from TEST_witti_world import (check_wittiaram, check_wittimew, exit_aram_to_plaza,
+                               switch_aram_subject)
 from download_thumbnails import cleanup_thumbnails
 from request_API import get_study_access_auth
 
@@ -123,7 +124,11 @@ def AutoTest_Start(
         prev_step = None   # 직전에 화면에서 선택된 STEP
         for idx, (sj, it, ct) in enumerate(combos, start=1):
             next_combo = combos[idx] if idx < total else None
-            do_exit = (next_combo is None) or (next_combo[0] != sj)
+            # 광장까지 나가는 것은 전체가 끝날 때뿐이다. 과목이 바뀔 때는
+            # 과목 선택 화면까지만 올라가면 되므로(switch_aram_subject) 여기서
+            # 나가지 않는다. 광장 왕복은 매번 스쿨/인트로를 다시 거쳐야 한다.
+            subject_changes = next_combo is not None and next_combo[0] != sj
+            do_exit = next_combo is None
             # STEP 버튼은 재진입했거나 STEP이 바뀔 때만 누른다
             # (매번 누르면 호 목록 스크롤이 초기화되어 처음부터 다시 탐색)
             do_select_step = need_enter or it != prev_step
@@ -143,6 +148,24 @@ def AutoTest_Start(
                                 do_select_step=do_select_step)
                 need_enter = do_exit
                 prev_step = None if do_exit else it
+                if subject_changes:
+                    # 과목 선택 화면까지만 올라가 다음 과목으로 갈아탄다.
+                    # 실패하면 광장 경로로 되돌려 다음 항목이 처음부터 들어가게 한다.
+                    if switch_aram_subject(next_combo[0]):
+                        need_enter = False
+                    else:
+                        print("[WARN] 과목 전환 실패 → 광장으로 나갔다 재진입합니다")
+                        if not exit_aram_to_plaza():
+                            result_mark, result_text = "X", "실패"
+                            print(f"{result_mark} [{idx}/{total}] {label} {result_text}   "
+                                  f"{_now_hms()} (소요 {_elapsed_text(time.time() - started_at)})")
+                            print(SEPARATOR)
+                            print("[FATAL] 화면 복구 실패 → ALL 진행을 중단합니다 "
+                                  f"(완료 {idx}/{total})")
+                            break
+                        need_enter = True
+                    # 과목이 바뀌면 호 목록이 새로 그려지므로 STEP을 다시 눌러야 한다
+                    prev_step = None
             except Exception as e:
                 result_mark, result_text = "X", "실패"
                 print(f"[ERROR] {label} 검증 실패: {e}")
