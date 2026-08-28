@@ -44,7 +44,6 @@ def AutoTest_Start(
     study_access_mem_nm=None,
     study_access_mem_id=None,
     study_access_auth_token=None,
-    selected_class_id="",
 ):
     # 0) Connect device
     # 부모 프로세스가 정한 adb 서버 포트를 그대로 따른다. 여기서 값을 고정하면
@@ -102,7 +101,7 @@ def AutoTest_Start(
         if not mem_id or not mem_nm:
             print("[ERROR] study/access memId/memNm is missing. Cannot run WittiBox test.")
             return
-        ok = check_wittibox([mem_id], [mem_nm], authToken, server, inputId, selected_class_id)
+        ok = check_wittibox([mem_id], [mem_nm], authToken, server, inputId)
         if not ok:
             print("[ERROR] WittiBox test stopped due to class selection failure.")
             return

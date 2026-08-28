@@ -249,7 +249,6 @@ def worker_main(
     study_access_mem_nm,
     study_access_mem_id,
     study_access_auth_token,
-    selected_class_id="",
 ):
     import builtins, traceback
     def _print_via_queue(*args, sep=" ", end="\n", **kwargs):
@@ -273,7 +272,6 @@ def worker_main(
             study_access_mem_nm,
             study_access_mem_id,
             study_access_auth_token,
-            selected_class_id,
         )
     except Exception as e:
         print(f"[ERROR] AutoTest_Start 중 예외: {e!r}")
@@ -1917,7 +1915,6 @@ class MainApp(QtWidgets.QMainWindow):
             self.study_access_mem_nm,
             self.study_access_mem_id,
             self.study_access_auth_token,
-            str(self.selected_class_id or "").strip(),
         )
         self.worker_process = Process(target=worker_main, args=args)
         try:

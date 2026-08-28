@@ -10,29 +10,21 @@ from request_API import *
 
 
 # WittiBox content verification
-def check_wittibox(childIds, childNms, authToken, server, inputId, classId=""):
+def check_wittibox(childIds, childNms, authToken, server, inputId):
     child_pairs = list(zip(childIds, childNms))
     if not child_pairs:
         print("[WARN] No child info found. Skip WittiBox verification.")
         return False
 
-    selected_class_id = str(classId or "").strip()
     loop_items = []
     try:
         class_resp = class_list(authToken, inputId, server)
         if class_resp is not None:
             class_items = class_resp.json().get("result", {}).get("classList", [])
-            if selected_class_id:
-                class_items = [
-                    c for c in class_items
-                    if str(c.get("classId", "")).strip() == selected_class_id
-                ]
-                if not class_items:
-                    print(f"[ERROR] selected classId={selected_class_id} not found in class list.")
-                    return False
-                print(f"[INFO] 선택 반만 테스트 (classId={selected_class_id})")
-            else:
-                print("[INFO] 전체 반 테스트")
+            # 반은 항상 전체를 돈다. GUI의 반 선택은 API 테스트 범위를 좁히는
+            # 용도이지, 앱 검증 범위를 줄이라는 뜻이 아니다. 예전에는 그 값이
+            # 여기까지 넘어와 첫 번째 반 하나만 돌고 끝났다.
+            print(f"[INFO] 전체 반 테스트 (classList={len(class_items)})")
 
             for cls in class_items:
                 class_id = str(cls.get("classId", "")).strip()
