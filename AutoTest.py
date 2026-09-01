@@ -5,6 +5,7 @@ import traceback
 from airtest.core.api import connect_device, device, time
 
 from adb_recovery import ensure_device_alive, set_device_uri
+from airtest_patch import apply_patches
 
 from TEST_witti_box import check_wittibox
 from TEST_witti_world import (check_wittiaram, check_wittimew, exit_aram_to_plaza,
@@ -50,6 +51,9 @@ def AutoTest_Start(
     # 포트를 옮겼을 때 워커만 다른 서버에 붙어 기기를 못 찾는다.
     adb_port = os.environ.get("ANDROID_ADB_SERVER_PORT", "5037")
     device_uri = f"Android://127.0.0.1:{adb_port}/{device_name}?cap_method=MINICAP"
+    # minicap 배포가 airtest 버그로 실패하면 JAVACAP으로 폴백하면서 Yosemite.apk를
+    # 설치한다. 연결 전에 패치를 걸어 minicap이 정상 배포되도록 한다.
+    apply_patches()
     connect_device(device_uri)
     # 끊겼을 때 같은 옵션으로 다시 붙을 수 있도록 URI를 복구 모듈에 넘겨둔다
     set_device_uri(device_uri)

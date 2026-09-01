@@ -14,6 +14,8 @@ import time
 from airtest.core.api import connect_device
 from airtest.core.helper import G
 
+from airtest_patch import apply_patches
+
 # connect_device에 쓴 URI. 재연결 시 동일 옵션(cap_method 등)으로 다시 붙어야 한다.
 _DEVICE_URI = None
 
@@ -64,6 +66,7 @@ def reconnect_device(timeout=RECONNECT_TIMEOUT, interval=RECONNECT_INTERVAL):
     while time.time() < deadline:
         attempt += 1
         try:
+            apply_patches()
             connect_device(_DEVICE_URI)
             if device_alive():
                 print(f"[Recover] 기기 재연결 성공 (시도 {attempt}회)")
