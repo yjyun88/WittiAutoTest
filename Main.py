@@ -1810,9 +1810,16 @@ class MainApp(QtWidgets.QMainWindow):
             lines = [ln for ln in out.strip().splitlines()[1:] if ln.strip()]
             entries = []
             for ln in lines:
-                parts = ln.split()
-                if len(parts) < 2 or parts[1] != "device": continue
-                dev_id = parts[0]
+                # 공백으로 그냥 자르면 안 된다. mDNS 이름이 겹치면 adb가
+                # "adb-XXXX-yyyy (2)._adb-tls-connect._tcp"처럼 공백이 든 이름을
+                # 그대로 내보내는데, split()으로는 상태가 "(2)..."로 잡혀
+                # 그 기기가 목록에서 통째로 사라진다.
+                m_state = re.match(r"^(?P<id>.+?)[ \t]+(?P<state>device|offline|unauthorized|"
+                                   r"authorizing|connecting|bootloader|recovery|sideload|"
+                                   r"rescue|host|no permissions[^ ]*)(?:[ \t]+(?P<rest>.*))?$", ln)
+                if not m_state or m_state.group("state") != "device": continue
+                dev_id = m_state.group("id").strip()
+                parts = (m_state.group("rest") or "").split()
                 model = next((p.split(":", 1)[1] for p in parts if p.startswith("model:")), "").replace("_", "-")
                 wifi = False
                 serial_hint = ""
