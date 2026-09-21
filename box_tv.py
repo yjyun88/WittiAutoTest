@@ -1,7 +1,7 @@
 import os
 import time as pytime
 
-from airtest.core.api import sleep, swipe, touch, wait
+from airtest.core.api import device, sleep, touch, wait
 
 from Touch_template import touch_template
 from box_ACT import capture_screen
@@ -11,6 +11,39 @@ from utils import Template, output_path
 
 BASE_RESOLUTION = (1920, 1200)
 MAX_SWIPE_ATTEMPTS = 8
+# 카드 한 칸(≈카드 간격)만큼만 민다. 1920px 기준 간격이 699px이라 0.36.
+SWIPE_STEP_RATIO = 0.36
+SWIPE_DURATION_MS = 1200
+
+
+def swipe_one_card():
+    """TV 목록을 카드 한 칸만큼 왼쪽으로 민다.
+
+    airtest 의 swipe() 는 이 기기에서 벡터 길이도 duration 도 먹지 않는다.
+    -0.2 든 -0.5 든, duration 을 3초로 늘려도 결과가 소수점까지 같았다.
+    한 번에 목록 끝(최대 스크롤)까지 가버린다.
+
+    그러면 목록 중간 카드는 어느 위치에서도 화면 경계에 걸쳐 잘린다.
+    실측(1920x1200, 카드 간격 699px)으로 tvList_2 는
+
+        처음    중심 x=1787  오른쪽이 잘려 왼쪽 69%만 노출
+        스와이프 후 중심 x=133  왼쪽이 잘려 오른쪽 69%만 노출
+
+    템플릿 전체가 들어가는 창이 없어 매칭 점수가 0.36 에서 오르지 않았고,
+    MAX_SWIPE_ATTEMPTS 를 모두 소진하며 100초씩 태운 뒤 실패했다.
+
+    adb 의 input swipe 는 끈 거리만큼만 정확히 움직인다. 같은 자리에서
+    699px 을 끌면 tvList_2 가 중심 x=1016 에 온전히 들어오고 점수 0.96 이 나온다.
+    """
+    w, h = device().get_current_resolution()
+    if h > w:
+        w, h = h, w
+    y = int(h * 0.6)
+    x1 = int(w * 0.83)
+    x2 = int(x1 - w * SWIPE_STEP_RATIO)
+    device().shell(f"input swipe {x1} {y} {x2} {y} {SWIPE_DURATION_MS}")
+    sleep(1.0)
+
 
 before_tpl = Template(r"button_images\tv_cate.png", resolution=BASE_RESOLUTION)
 after_tpl = [
@@ -52,7 +85,7 @@ def touch_tvlist_images(
                     touched = True
                 else:
                     print(f"'{img_file}' 이미지 터치 실패. 스와이프 후 재시도합니다. ({attempts + 1}/{MAX_SWIPE_ATTEMPTS})")
-                    swipe((0.5, 0.6), vector=[-0.5, 0])
+                    swipe_one_card()
                     attempts += 1
 
             if not touched:
